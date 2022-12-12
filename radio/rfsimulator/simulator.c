@@ -60,7 +60,7 @@
 
 #define MAX_SIMULATION_CONNECTED_NODES 5
 #define GENERATE_CHANNEL 10 //each frame in DL
-
+extern int num_delay;//add_yjn
 
 //
 
@@ -757,7 +757,8 @@ static bool flushInput(rfsimulator_state_t *t, int timeout, int nsamps_for_initi
           LOG_E(HW,"UEsock: %d Tx/Rx shift too large Tx:%lu, Rx:%lu\n", fd, t->lastWroteTS, b->lastReceivedTS);
 
         pthread_mutex_unlock(&Sockmutex);
-        b->transferPtr=(char *)&b->circularBuf[(b->lastReceivedTS*b->th.nbAnt)%CirSize];
+        // b->transferPtr=(char *)&b->circularBuf[(b->lastReceivedTS*b->th.nbAnt)%CirSize];
+         b->transferPtr=(char *)&b->circularBuf[((b->lastReceivedTS+(int)(num_delay*7680 / 2))*b->th.nbAnt)%CirSize];  //add_yjn
         b->remainToTransfer=sampleToByte(b->th.size, b->th.nbAnt);
       }
 

@@ -37,29 +37,35 @@
 
 extern RAN_CONTEXT_t RC;
 
+extern int num_delay;  //add_yjn
 
-
+int get_future_ul_tti_req_ind(gNB_MAC_INST * gNB, frame_t frame, sub_frame_t slot);//add_yjn
 static void nr_fill_nfapi_pucch(gNB_MAC_INST *nrmac,
                                 frame_t frame,
                                 sub_frame_t slot,
                                 const NR_sched_pucch_t *pucch,
                                 NR_UE_info_t* UE)
 {
+  NR_COMMON_channels_t * common_ch=nrmac->common_channels;
+  NR_ServingCellConfigCommon_t *scc = common_ch->ServingCellConfigCommon;
+  const int num_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing]; //add_yjn
 
-  nfapi_nr_ul_tti_request_t *future_ul_tti_req = &nrmac->UL_tti_req_ahead[0][pucch->ul_slot];
-  if (future_ul_tti_req->SFN != pucch->frame || future_ul_tti_req->Slot != pucch->ul_slot)
-    LOG_W(MAC,
-          "Current %d.%d : future UL_tti_req's frame.slot %4d.%2d does not match PUCCH %4d.%2d\n",
-          frame,slot,
-          future_ul_tti_req->SFN,
-          future_ul_tti_req->Slot,
-          pucch->frame,
-          pucch->ul_slot);
-
+  frame_t pucch_frame = (pucch->frame + (pucch->ul_slot + num_delay)/num_slots)%1024;//add_yjn
+  sub_frame_t pucch_slot = (pucch->ul_slot + num_delay)%num_slots;                //add_yjn
+  int future_index = get_future_ul_tti_req_ind(nrmac, pucch_frame,  pucch_slot);     //add_yjn
+  nfapi_nr_ul_tti_request_t *future_ul_tti_req = &nrmac->UL_tti_req_ahead[0][future_index];//add_yjn
+ AssertFatal(future_ul_tti_req->SFN == pucch_frame  //add_yjn    ZJWSBnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnbnnbnbnbnbnbnbnbnbnbnbnbnb
+              && future_ul_tti_req->Slot ==  pucch_slot,  //add_yjn
+              "Current %4d.%2d : future UL_tti_req's frame.slot %4d.%2d does not match PUCCH %4d.%2d\n",
+              frame,slot,
+              future_ul_tti_req->SFN,
+              future_ul_tti_req->Slot,
+              pucch_frame,  //add_yjn
+              pucch_slot);
   // n_pdus is number of pdus, so, in the array, it is the index of the next free element
   if (future_ul_tti_req->n_pdus >= sizeofArray(future_ul_tti_req->pdus_list) ) {
     LOG_E(NR_MAC,"future_ul_tti_req->n_pdus %d is full, slot: %d, sr flag %d dropping request\n",
-	  future_ul_tti_req->n_pdus, pucch->ul_slot, pucch->sr_flag);
+	  future_ul_tti_req->n_pdus,  pucch_slot, pucch->sr_flag); //add_yjn
     return;
   }
   future_ul_tti_req->pdus_list[future_ul_tti_req->n_pdus].pdu_type = NFAPI_NR_UL_CONFIG_PUCCH_PDU_TYPE;
@@ -73,14 +79,12 @@ static void nr_fill_nfapi_pucch(gNB_MAC_INST *nrmac,
         pucch->dai_c>0 ? "pucch_acknack" : "",
         frame,
         slot,
-        pucch->frame,
-        pucch->ul_slot,
+        pucch_frame,  //add_yjn
+         pucch_slot,  //add_yjn
         pucch->sr_flag,
         pucch->dai_c,
         pucch->csi_bits,
         pucch->resource_indicator);
-  NR_COMMON_channels_t * common_ch=nrmac->common_channels;
-  NR_ServingCellConfigCommon_t *scc = common_ch->ServingCellConfigCommon;
 
   LOG_D(NR_MAC,"%4d.%2d Calling nr_configure_pucch (pucch_Config %p,r_pucch %d) pucch to be scheduled in %4d.%2d\n",
         frame,slot,UE->current_UL_BWP.pucch_Config,pucch->r_pucch,pucch->frame,pucch->ul_slot);
@@ -244,7 +248,11 @@ void nr_csi_meas_reporting(int Mod_idP,
       int bwp_start = ul_bwp->BWPStart;
 
       // going through the list of PUCCH resources to find the one indexed by resource_id
-      uint16_t *vrb_map_UL = &RC.nrmac[Mod_idP]->common_channels[0].vrb_map_UL[sched_slot * MAX_BWP_SIZE];
+      // int sched_frame_delay = (sched_frame + (sched_slot + num_delay)/n_slots_frame)%1024;   //add_yjn
+      // int sched_slot_delay = (sched_slot + num_delay)%n_slots_frame;
+      int future_ind = get_future_ul_tti_req_ind(RC.nrmac[Mod_idP], sched_frame, sched_slot); 
+      uint16_t *vrb_map_UL = &RC.nrmac[Mod_idP]->common_channels[0].vrb_map_UL[future_ind * MAX_BWP_SIZE]; //add_yjn
+      // LOG_I(NR_MAC,"[yjn]the vrb_map_UL slot of csi_meas is future_ind(%d)\n",future_ind);//debug_yjn
       const int m = pucch_Config->resourceToAddModList->list.count;
       for (int j = 0; j < m; j++) {
         NR_PUCCH_Resource_t *pucchres = pucch_Config->resourceToAddModList->list.array[j];
@@ -303,8 +311,9 @@ static void handle_dl_harq(NR_UE_info_t * UE,
     LOG_D(NR_MAC, "retransmission error for UE %04x (total %"PRIu64")\n", UE->rnti, UE->mac_stats.dl.errors);
   } else {
     LOG_D(PHY,"NACK for: pid %d, ue %04x\n",harq_pid, UE->rnti);
-    add_tail_nr_list(&UE->UE_sched_ctrl.retrans_dl_harq, harq_pid);
-    harq->round++;
+    // add_tail_nr_list(&UE->UE_sched_ctrl.retrans_dl_harq, harq_pid);
+    // harq->round++;
+    abort_nr_dl_harq(UE, harq_pid);
   }
 }
 
@@ -920,22 +929,73 @@ void handle_nr_uci_pucch_0_1(module_id_t mod_id,
     return;
   }
   NR_UE_sched_ctrl_t *sched_ctrl = &UE->UE_sched_ctrl;
+  
+  //=======================for RA procedure===========================//
+  int flag = 0;    
+  for (int CC_id = 0; CC_id < MAX_NUM_CCs; CC_id++) {//add_yjn_harq
+    NR_COMMON_channels_t *cc = &RC.nrmac[mod_id]->common_channels[CC_id];
+    for (int i = 0; i < NR_NB_RA_PROC_MAX; i++) {
+      NR_RA_t *ra = &cc->ra[i];
+      LOG_D(NR_MAC, "RA[state:%d]\n", ra->state);
+      switch (ra->state) {
+        case WAIT_Msg4_ACK:      
+          if (((uci_01->pduBitmap >> 1) & 0x01)) {
+            LOG_I(NR_MAC,"[yjn]:======================handle_nr_uci_pucch_0_1 for RA procedure\n");
+            // iterate over received harq bits
+            for (int harq_bit = 0; harq_bit < uci_01->harq->num_harq; harq_bit++) {
+              const uint8_t harq_value = uci_01->harq->harq_list[harq_bit].harq_value;
+              const uint8_t harq_confidence = uci_01->harq->harq_confidence_level;
+              NR_UE_harq_t *harq = find_harq(frame, slot, UE, RC.nrmac[mod_id]->dl_bler.harq_round_max);
+              if (!harq) {
+                LOG_E(NR_MAC, "Oh no! Could not find a harq in %s!\n", __FUNCTION__);
+                break;
+              }
+              DevAssert(harq->is_waiting);
+              // const int8_t pid = sched_ctrl->feedback_dl_harq.head;
+              const int pid = sched_ctrl->feedback_dl_harq.head;//add_yjn_harq
+              remove_front_nr_list(&sched_ctrl->feedback_dl_harq);
+              LOG_D(NR_MAC,"%4d.%2d bit %d pid %d ack/nack %d\n",frame, slot, harq_bit,pid,harq_value);
+              handle_dl_harq(UE, pid, harq_value == 0 && harq_confidence == 0, RC.nrmac[mod_id]->dl_bler.harq_round_max);
+              if (harq_confidence == 1)  UE->mac_stats.pucch0_DTX++;
+            }
 
+            // tpc (power control) only if we received AckNack
+            if (uci_01->harq->harq_confidence_level==0)
+              sched_ctrl->tpc1 = nr_get_tpc(RC.nrmac[mod_id]->pucch_target_snrx10, uci_01->ul_cqi, 30);
+            else
+              sched_ctrl->tpc1 = 3;
+            sched_ctrl->pucch_snrx10 = uci_01->ul_cqi * 5 - 640;
+
+            free(uci_01->harq->harq_list);
+            free(uci_01->harq);
+          }
+
+          // check scheduling request result, confidence_level == 0 is good
+          if (uci_01->pduBitmap & 0x1) {
+            if (uci_01->sr->sr_indication && uci_01->sr->sr_confidence_level == 0 && uci_01->ul_cqi >= 148) {
+              // SR detected with SNR >= 10dB
+              sched_ctrl->SR |= true;
+              LOG_D(NR_MAC, "SR UE %04x ul_cqi %d\n", uci_01->rnti, uci_01->ul_cqi);
+            }
+            free(uci_01->sr);
+          }
+          flag++;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  if (flag > 0) return;
+
+  //=======================for PDSCH procedure=======================//
   if (((uci_01->pduBitmap >> 1) & 0x01)) {
+    LOG_D(NR_MAC,"[yjn]:======================handle_nr_uci_pucch_0_1 for PDSCH procedure\n");
     // iterate over received harq bits
     for (int harq_bit = 0; harq_bit < uci_01->harq->num_harq; harq_bit++) {
       const uint8_t harq_value = uci_01->harq->harq_list[harq_bit].harq_value;
       const uint8_t harq_confidence = uci_01->harq->harq_confidence_level;
-      NR_UE_harq_t *harq = find_harq(frame, slot, UE, RC.nrmac[mod_id]->dl_bler.harq_round_max);
-      if (!harq) {
-        LOG_E(NR_MAC, "Oh no! Could not find a harq in %s!\n", __FUNCTION__);
-        break;
-      }
-      DevAssert(harq->is_waiting);
-      const int8_t pid = sched_ctrl->feedback_dl_harq.head;
-      remove_front_nr_list(&sched_ctrl->feedback_dl_harq);
-      LOG_D(NR_MAC,"%4d.%2d bit %d pid %d ack/nack %d\n",frame, slot, harq_bit,pid,harq_value);
-      handle_dl_harq(UE, pid, harq_value == 0 && harq_confidence == 0, RC.nrmac[mod_id]->dl_bler.harq_round_max);
+      LOG_D(NR_MAC,"%4d.%2d bit %d ack/nack %d\n",frame, slot, harq_bit,harq_value);
       if (harq_confidence == 1)  UE->mac_stats.pucch0_DTX++;
     }
 
@@ -997,7 +1057,8 @@ void handle_nr_uci_pucch_2_3_4(module_id_t mod_id,
       if (!harq)
         break;
       DevAssert(harq->is_waiting);
-      const int8_t pid = sched_ctrl->feedback_dl_harq.head;
+      // const int8_t pid = sched_ctrl->feedback_dl_harq.head;
+      const int pid = sched_ctrl->feedback_dl_harq.head;//add_yjn_harq
       remove_front_nr_list(&sched_ctrl->feedback_dl_harq);
       handle_dl_harq(UE, pid, uci_234->harq.harq_crc != 1 && acknack, RC.nrmac[mod_id]->dl_bler.harq_round_max);
     }
@@ -1157,7 +1218,11 @@ int nr_acknack_scheduling(gNB_MAC_INST *mac,
     else { // unoccupied occasion
       // checking if in ul_slot the resources potentially to be assigned to this PUCCH are available
       set_pucch_allocation(pucch_Config, scc, r_pucch, bwp_size, curr_pucch);
-      uint16_t *vrb_map_UL = &mac->common_channels[CC_id].vrb_map_UL[pucch_slot * MAX_BWP_SIZE];
+      // int pucch_frame_delay = (pucch->frame + (pucch->ul_slot + num_delay)/n_slots_frame)%1024;//add_yjn
+      // int pucch_slot_delay = (pucch->ul_slot + num_delay)%n_slots_frame;
+      int future_ind = get_future_ul_tti_req_ind(mac, pucch_frame, pucch_slot);//add_yjn
+      uint16_t *vrb_map_UL = &mac->common_channels[CC_id].vrb_map_UL[future_ind * MAX_BWP_SIZE];//add_yjn
+      // uint16_t *vrb_map_UL = &mac->common_channels[CC_id].vrb_map_UL[pucch_slot * MAX_BWP_SIZE];
       bool ret = test_pucch0_vrb_occupation(curr_pucch,
                                             vrb_map_UL,
                                             bwp_start,
@@ -1247,7 +1312,12 @@ void nr_sr_reporting(gNB_MAC_INST *nrmac, frame_t SFN, sub_frame_t slot)
         continue;
       }
       else {
-        uint16_t *vrb_map_UL = &nrmac->common_channels[CC_id].vrb_map_UL[slot * MAX_BWP_SIZE];
+        // frame_t sr_frame = (SFN + (slot + num_delay)/n_slots_frame)%1024; //add_yjn
+        // sub_frame_t sr_slot = (slot + num_delay)%n_slots_frame;//add_yjn
+        int future_index = get_future_ul_tti_req_ind(nrmac, SFN, slot); //add_yjn
+        // int future_index = get_future_ul_tti_req_ind(nrmac, SFN, slot); //add_yjn
+        uint16_t *vrb_map_UL = &nrmac->common_channels[CC_id].vrb_map_UL[future_index * MAX_BWP_SIZE];
+        // uint16_t *vrb_map_UL = &nrmac->common_channels[CC_id].vrb_map_UL[slot * MAX_BWP_SIZE];
         const int bwp_start = ul_bwp->BWPStart;
         const int bwp_size = ul_bwp->BWPSize;
         set_pucch_allocation(pucch_Config, scc, -1, bwp_size, curr_pucch);

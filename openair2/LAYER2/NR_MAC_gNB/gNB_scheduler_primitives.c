@@ -916,7 +916,8 @@ void config_uldci(const NR_SIB1_t *sib1,
   dci_pdu_rel15->mcs = pusch_pdu->mcs_index;
   dci_pdu_rel15->ndi = ndi;
   dci_pdu_rel15->rv = pusch_pdu->pusch_data.rv_index;
-  dci_pdu_rel15->harq_pid = pusch_pdu->pusch_data.harq_process_id;
+ // dci_pdu_rel15->harq_pid = pusch_pdu->pusch_data.harq_process_id;
+  dci_pdu_rel15->harq_pid = (pusch_pdu->pusch_data.harq_process_id)%16;//add_yjn_harq
   dci_pdu_rel15->tpc = tpc;
   NR_PUSCH_Config_t *pusch_Config = ul_bwp->pusch_Config;
 
@@ -2574,11 +2575,17 @@ NR_UE_info_t *add_new_nr_ue(gNB_MAC_INST *nr_mac, rnti_t rntiP, NR_CellGroupConf
   create_dl_harq_list(sched_ctrl, dl_bwp->pdsch_servingcellconfig);
   // add all available UL HARQ processes for this UE
   // nb of ul harq processes not configurable
-  create_nr_list(&sched_ctrl->available_ul_harq, 16);
-  for (int harq = 0; harq < 16; harq++)
-    add_tail_nr_list(&sched_ctrl->available_ul_harq, harq);
-  create_nr_list(&sched_ctrl->feedback_ul_harq, 16);
-  create_nr_list(&sched_ctrl->retrans_ul_harq, 16);
+  // create_nr_list(&sched_ctrl->available_ul_harq, 16);
+  // for (int harq = 0; harq < 16; harq++)
+  //   add_tail_nr_list(&sched_ctrl->available_ul_harq, harq);
+  // create_nr_list(&sched_ctrl->feedback_ul_harq, 16);
+  // create_nr_list(&sched_ctrl->retrans_ul_harq, 16);
+
+     create_nr_list(&sched_ctrl->available_ul_harq, 255); //add_yjn_harq
+    for (int harq = 0; harq < 255; harq++)
+      add_tail_nr_list(&sched_ctrl->available_ul_harq, harq);
+    create_nr_list(&sched_ctrl->feedback_ul_harq, 255);
+    create_nr_list(&sched_ctrl->retrans_ul_harq, 255);
 
   reset_srs_stats(UE);
 
@@ -2630,8 +2637,9 @@ void set_sched_pucch_list(NR_UE_sched_ctrl_t *sched_ctrl,
 
 void create_dl_harq_list(NR_UE_sched_ctrl_t *sched_ctrl,
                          const NR_PDSCH_ServingCellConfig_t *pdsch) {
-  const int nrofHARQ = pdsch && pdsch->nrofHARQ_ProcessesForPDSCH ?
-                       get_nrofHARQ_ProcessesForPDSCH(*pdsch->nrofHARQ_ProcessesForPDSCH) : 8;
+  // const int nrofHARQ = pdsch && pdsch->nrofHARQ_ProcessesForPDSCH ?
+  //                      get_nrofHARQ_ProcessesForPDSCH(*pdsch->nrofHARQ_ProcessesForPDSCH) : 8;
+  const int nrofHARQ = 64;//add_yjn_harq
   // add all available DL HARQ processes for this UE
   AssertFatal(sched_ctrl->available_dl_harq.len == sched_ctrl->feedback_dl_harq.len
               && sched_ctrl->available_dl_harq.len == sched_ctrl->retrans_dl_harq.len,
@@ -2691,7 +2699,8 @@ void reset_ul_harq_list(NR_UE_sched_ctrl_t *sched_ctrl) {
     add_tail_nr_list(&sched_ctrl->available_ul_harq, harq);
   }
 
-  for (int i = 0; i < NR_MAX_NB_HARQ_PROCESSES; i++) {
+  // for (int i = 0; i < NR_MAX_NB_HARQ_PROCESSES; i++) {
+  for (int i = 0; i < 255; i++) { //add_yjn_harq
     sched_ctrl->ul_harq_processes[i].feedback_slot = -1;
     sched_ctrl->ul_harq_processes[i].round = 0;
     sched_ctrl->ul_harq_processes[i].is_waiting = false;
@@ -3091,7 +3100,7 @@ void UL_tti_req_ahead_initialization(gNB_MAC_INST * gNB, NR_ServingCellConfigCom
   for (int i = 0; i < n; ++i) {
     nfapi_nr_ul_tti_request_t *req = &gNB->UL_tti_req_ahead[CCid][i];
     req->SFN = i < (gNB->if_inst->sl_ahead-1);
-    req->Slot = i;
+    req->Slot = i % nr_slots_per_frame[*scc->ssbSubcarrierSpacing]; //add_yjn
   }
 }
 

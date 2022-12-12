@@ -457,7 +457,7 @@ int nr_mac_enable_ue_rrc_processing_timer(module_id_t Mod_idP, rnti_t rnti, NR_S
 
   return 0;
 }
-
+extern int num_delay;  //add_yjn_sec
 int rrc_mac_config_req_gNB(module_id_t Mod_idP,
                            rrc_pdsch_AntennaPorts_t pdsch_AntennaPorts,
                            int pusch_AntennaPorts,
@@ -470,12 +470,21 @@ int rrc_mac_config_req_gNB(module_id_t Mod_idP,
                            uint32_t rnti,
                            NR_CellGroupConfig_t *CellGroup) {
 
-  if (scc != NULL ) {
+ if (scc != NULL ) {
     AssertFatal((scc->ssb_PositionsInBurst->present > 0) && (scc->ssb_PositionsInBurst->present < 4), "SSB Bitmap type %d is not valid\n",scc->ssb_PositionsInBurst->present);
+    
+    const int n = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];//add_yjn
 
-    const int n = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];
+    int num_slots = 20;
+    if (num_delay <= 10)  num_slots = n + 10;     //  if 30khz, 40 slot
+    else if (num_delay<=30) num_slots = n + 30;     //  if 30khz, 80 slot
+    else if (num_delay<=70) num_slots = n + 70;     //  if 30khz, 160 slot
+    else if (num_delay<=150) num_slots = n + 150;     //  if 30khz, 320 slot
+     else if (num_delay<=310) num_slots = n + 310;     //  if 30khz, 320 slot
+    else  LOG_E(NR_MAC,"RTT-slot only support <= 310\n");
+
     RC.nrmac[Mod_idP]->common_channels[0].vrb_map_UL =
-        calloc(n * MAX_BWP_SIZE, sizeof(uint16_t));
+        calloc((num_slots) * MAX_BWP_SIZE, sizeof(uint16_t));//add_yjn
     AssertFatal(RC.nrmac[Mod_idP]->common_channels[0].vrb_map_UL,
                 "could not allocate memory for RC.nrmac[]->common_channels[0].vrb_map_UL\n");
 
@@ -489,7 +498,7 @@ int rrc_mac_config_req_gNB(module_id_t Mod_idP,
 		  scc);
     LOG_D(NR_MAC, "%s() %s:%d RC.nrmac[Mod_idP]->if_inst->NR_PHY_config_req:%p\n", __FUNCTION__, __FILE__, __LINE__, RC.nrmac[Mod_idP]->if_inst->NR_PHY_config_req);
   
-    if (NFAPI_MODE == NFAPI_MODE_PNF || NFAPI_MODE == NFAPI_MODE_VNF) {
+ if (NFAPI_MODE == NFAPI_MODE_PNF || NFAPI_MODE == NFAPI_MODE_VNF) {
       // fake that the gNB is configured in nFAPI mode, which would normally be
       // done in a NR_PHY_config_req, but in this mode, there is no PHY
       RC.gNB[Mod_idP]->configured = 1;
@@ -520,8 +529,8 @@ int rrc_mac_config_req_gNB(module_id_t Mod_idP,
       // if TDD configuration is not present and the band is not FDD, it means it is a dynamic TDD configuration
       AssertFatal(RC.nrmac[Mod_idP]->common_channels[0].frame_type == FDD,"Dynamic TDD not handled yet\n");
 
-    for (int slot = 0; slot < n; ++slot) {
-      RC.nrmac[Mod_idP]->dlsch_slot_bitmap[slot / 64] |= (uint64_t)((slot % nr_slots_period) < nr_dl_slots) << (slot % 64);
+    for (int slot = 0; slot < (num_slots); ++slot) {//add_yjn_test_!!!!!!!!!!!!!
+      RC.nrmac[Mod_idP]->dlsch_slot_bitmap[slot / 64] |= (uint64_t)((slot % nr_slots_period) < nr_dl_slots) << (slot % 64);//add_yjn 改成纯下行时隙
       RC.nrmac[Mod_idP]->ulsch_slot_bitmap[slot / 64] |= (uint64_t)((slot % nr_slots_period) >= nr_ulstart_slot) << (slot % 64);
 
       LOG_I(NR_MAC, "In %s: slot %d DL %d UL %d\n",

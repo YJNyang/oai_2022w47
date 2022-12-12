@@ -90,7 +90,8 @@
 #define NR_MAX_NB_LAYERS 4 // 8
 #define NR_MAX_NB_PORTS 32
 
-#define NR_MAX_NB_HARQ_PROCESSES 16
+// #define NR_MAX_NB_HARQ_PROCESSES 16
+#define NR_MAX_NB_HARQ_PROCESSES 64  //add_yjn_harq
 
 #define NR_MAX_PDSCH_TBS 3824
 

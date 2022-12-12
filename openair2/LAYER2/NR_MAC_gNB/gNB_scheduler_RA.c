@@ -46,8 +46,10 @@ extern RAN_CONTEXT_t RC;
 extern const uint8_t nr_slots_per_frame[5];
 extern uint16_t sl_ahead;
 
+extern int num_delay;
 uint8_t DELTA[4]= {2,3,4,6};
 
+int get_future_ul_tti_req_ind(gNB_MAC_INST * gNB, frame_t frame, sub_frame_t slot);//add_yjn
 #define MAX_NUMBER_OF_SSB 64		
 float ssb_per_rach_occasion[8] = {0.125,0.25,0.5,1,2,4,8};
 
@@ -238,15 +240,22 @@ void find_SSB_and_RO_available(module_id_t module_idP) {
         cc->total_prach_occasions_per_config_period);
 }		
 		
-void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP)
+void schedule_nr_prach(module_id_t module_idP, frame_t prach_frameP, sub_frame_t prach_slotP) //add_yjn
 {
   gNB_MAC_INST *gNB = RC.nrmac[module_idP];
   NR_COMMON_channels_t *cc = gNB->common_channels;
   NR_ServingCellConfigCommon_t *scc = cc->ServingCellConfigCommon;
-  nfapi_nr_ul_tti_request_t *UL_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[0][slotP];
+  const int num_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing]; //add_yjn
+
+  frame_t frameP = (prach_frameP + (prach_slotP + num_delay)/num_slots)%1024;//add_yjn
+  sub_frame_t slotP = (prach_slotP + num_delay)%num_slots;//add_yjn
+  
+  int future_index = get_future_ul_tti_req_ind(gNB, frameP, slotP); //++++++add_yjn  返回当前帧、时隙在组内的时隙号
+  nfapi_nr_ul_tti_request_t *UL_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[0][future_index];//add_yjn
+  // nfapi_nr_ul_tti_request_t *UL_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[0][slotP];
   nfapi_nr_config_request_scf_t *cfg = &RC.nrmac[module_idP]->config[0];
 
-  if (is_nr_UL_slot(scc->tdd_UL_DL_ConfigurationCommon, slotP, cc->frame_type)) {
+  if (is_nr_UL_slot(scc->tdd_UL_DL_ConfigurationCommon, prach_slotP, cc->frame_type)) { //add_yjn
 
     uint8_t config_index = scc->uplinkConfigCommon->initialUplinkBWP->rach_ConfigCommon->choice.setup->rach_ConfigGeneric.prach_ConfigurationIndex;
     uint8_t mu,N_dur,N_t_slot,start_symbol = 0,N_RA_slot;
@@ -266,8 +275,8 @@ void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP
     uint8_t fdm = cfg->prach_config.num_prach_fd_occasions.value;
     // prach is scheduled according to configuration index and tables 6.3.3.2.2 to 6.3.3.2.4
     if ( get_nr_prach_info_from_index(config_index,
-                                      (int)frameP,
-                                      (int)slotP,
+                                      (int)prach_frameP,
+                                      (int)prach_slotP,
                                       scc->downlinkConfigCommon->frequencyInfoDL->absoluteFrequencyPointA,
                                       mu,
                                       cc->frame_type,
@@ -283,7 +292,7 @@ void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP
       uint16_t format1 = (format>>8)&0xff; // second column of format from table
 
       if (N_RA_slot > 1) { //more than 1 PRACH slot in a subframe
-        if (slotP%2 == 1)
+        if (prach_slotP%2 == 1)
           slot_index = 1;
         else
           slot_index = 0;
@@ -291,12 +300,14 @@ void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP
         slot_index = 0;
       }
 
+      // UL_tti_req->SFN = frameP;
+      // UL_tti_req->Slot = slotP;
       UL_tti_req->SFN = frameP;
       UL_tti_req->Slot = slotP;
       for (int fdm_index=0; fdm_index < fdm; fdm_index++) { // one structure per frequency domain occasion
         for (int td_index=0; td_index<N_t_slot; td_index++) {
 
-          prach_occasion_id = (((frameP % (cc->max_association_period * config_period))/config_period) * cc->total_prach_occasions_per_config_period) +
+          prach_occasion_id = (((prach_frameP % (cc->max_association_period * config_period))/config_period) * cc->total_prach_occasions_per_config_period) +
                               (RA_sfn_index + slot_index) * N_t_slot * fdm + td_index * fdm + fdm_index;
 
           if((prach_occasion_id < cc->total_prach_occasions) && (td_index == 0)){
@@ -319,7 +330,7 @@ void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP
                                         scc->uplinkConfigCommon->initialUplinkBWP->rach_ConfigCommon->choice.setup->restrictedSetConfig);
 
             LOG_D(NR_MAC, "Frame %d, Slot %d: Prach Occasion id = %u  fdm index = %u start symbol = %u slot index = %u subframe index = %u \n",
-                  frameP, slotP,
+                  prach_frameP, prach_slotP,
                   prach_occasion_id, prach_pdu->num_ra,
                   prach_pdu->prach_start_symbol,
                   slot_index, RA_sfn_index);
@@ -389,7 +400,10 @@ void schedule_nr_prach(module_id_t module_idP, frame_t frameP, sub_frame_t slotP
       const uint8_t mu_pusch =
           scc->uplinkConfigCommon->frequencyInfoUL->scs_SpecificCarrierList.list.array[0]->subcarrierSpacing;
       const int16_t N_RA_RB = get_N_RA_RB(cfg->prach_config.prach_sub_c_spacing.value, mu_pusch);
-      uint16_t *vrb_map_UL = &cc->vrb_map_UL[slotP * MAX_BWP_SIZE];
+      int future_ind = get_future_ul_tti_req_ind(gNB, prach_frameP, prach_slotP);//add_yjn
+      uint16_t *vrb_map_UL = &cc->vrb_map_UL[future_ind * MAX_BWP_SIZE]; //add_yjn
+      LOG_D(NR_MAC,"[yjn]the vrb_map_UL slot of prach is future_ind(%d)\n",future_ind);//debug_yjn
+      // uint16_t *vrb_map_UL = &cc->vrb_map_UL[slotP * MAX_BWP_SIZE];
       for (int i = 0; i < N_RA_RB * fdm; ++i)
         vrb_map_UL[bwp_start + rach_ConfigGeneric->msg1_FrequencyStart + i] |= SL_to_bitmap(start_symbol, N_t_slot*N_dur);
     }
@@ -564,7 +578,8 @@ void nr_initiate_ra_proc(module_id_t module_idP,
         == NR_RACH_ConfigCommon__prach_RootSequenceIndex_PR_l839)
       ra_rnti = 1 + symbol + (9 /*slotP*/ * 14) + (freq_index * 14 * 80) + (ul_carrier_id * 14 * 80 * 8);
     else
-      ra_rnti = 1 + symbol + (slotP * 14) + (freq_index * 14 * 80) + (ul_carrier_id * 14 * 80 * 8);
+     ra_rnti = 1 + symbol + ((slotP + 320 * nr_slots_per_frame[*scc->ssbSubcarrierSpacing]- num_delay )%nr_slots_per_frame[*scc->ssbSubcarrierSpacing] * 14) + (freq_index * 14 * 80) + (ul_carrier_id * 14 * 80 * 8);  //add_yjn
+      //320 is enough for num_delay
 
     // Configure RA BWP
     configure_UE_BWP(nr_mac, scc, NULL, ra, NULL);
@@ -700,8 +715,8 @@ void nr_generate_Msg3_retransmission(module_id_t module_idP, int CC_id, frame_t 
   NR_PUSCH_TimeDomainResourceAllocationList_t *pusch_TimeDomainAllocationList = ul_bwp->tdaList;
   int mu = ul_bwp->scs;
   uint8_t K2 = *pusch_TimeDomainAllocationList->list.array[ra->Msg3_tda_id]->k2;
-  const int sched_frame = frame + (slot + K2 >= nr_slots_per_frame[mu]);
-  const int sched_slot = (slot + K2) % nr_slots_per_frame[mu];
+  const int sched_frame = (frame + (slot + K2 + num_delay) /  nr_slots_per_frame[mu])%1024;  //add_yjn
+  const int sched_slot = (slot + K2 + num_delay) % nr_slots_per_frame[mu]; //add_yjn
 
   if (is_xlsch_in_slot(RC.nrmac[module_idP]->ulsch_slot_bitmap[sched_slot / 64], sched_slot)) {
     // beam association for FR2
@@ -726,7 +741,10 @@ void nr_generate_Msg3_retransmission(module_id_t module_idP, int CC_id, frame_t 
     SLIV2SL(startSymbolAndLength, &StartSymbolIndex, &NrOfSymbols);
     int mappingtype = pusch_TimeDomainAllocationList->list.array[ra->Msg3_tda_id]->mappingType;
 
-    uint16_t *vrb_map_UL = &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[sched_slot * MAX_BWP_SIZE];
+    int future_ind = get_future_ul_tti_req_ind(nr_mac, sched_frame, sched_slot); //add_yjn
+    uint16_t *vrb_map_UL = &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[future_ind * MAX_BWP_SIZE];//add_yjn
+    // LOG_I(NR_MAC,"[yjn]the vrb_map_UL slot of retransmission msg3 is future_ind(%d)\n",future_ind);//debug_yjn
+    // uint16_t *vrb_map_UL = &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[sched_slot * MAX_BWP_SIZE];
 
     const int BWPSize = NRRIV2BW(scc->uplinkConfigCommon->initialUplinkBWP->genericParameters.locationAndBandwidth, MAX_BWP_SIZE);
     const int BWPStart = NRRIV2PRBOFFSET(scc->uplinkConfigCommon->initialUplinkBWP->genericParameters.locationAndBandwidth, MAX_BWP_SIZE);
@@ -746,7 +764,10 @@ void nr_generate_Msg3_retransmission(module_id_t module_idP, int CC_id, frame_t 
     LOG_I(NR_MAC, "[gNB %d][RAPROC] Frame %d, Slot %d : CC_id %d Scheduling retransmission of Msg3 in (%d,%d)\n",
           module_idP, frame, slot, CC_id, sched_frame, sched_slot);
 
-    nfapi_nr_ul_tti_request_t *future_ul_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[CC_id][sched_slot];
+     int future_index = get_future_ul_tti_req_ind(nr_mac, sched_frame, sched_slot);//add_yjn
+
+    nfapi_nr_ul_tti_request_t *future_ul_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[CC_id][future_index]; //add_yjn
+    // nfapi_nr_ul_tti_request_t *future_ul_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[CC_id][sched_slot];
     AssertFatal(future_ul_tti_req->SFN == sched_frame
                 && future_ul_tti_req->Slot == sched_slot,
                 "future UL_tti_req's frame.slot %d.%d does not match PUSCH %d.%d\n",
@@ -902,7 +923,7 @@ void nr_get_Msg3alloc(module_id_t module_id,
       SLIV2SL(pusch_TimeDomainAllocationList->list.array[i]->startSymbolAndLength, &start_symbol_index, &nr_of_symbols);
       LOG_D(NR_MAC,"Checking Msg3 TDA %d : k2 %d, sliv %d,S %d L %d\n",i,(int)k2,(int)pusch_TimeDomainAllocationList->list.array[i]->startSymbolAndLength,start_symbol_index,nr_of_symbols);
       // we want to transmit in the uplink symbols of mixed slot or the first uplink slot
-      abs_slot = (current_slot + k2 + DELTA[mu]);
+      abs_slot = (current_slot + k2 + DELTA[mu] + num_delay);//add_yjn
       int temp_slot = abs_slot % nr_slots_per_frame[mu]; // msg3 slot according to 8.3 in 38.213
       if ((temp_slot % nb_slots_per_period) == msg3_slot &&
           is_xlsch_in_slot(RC.nrmac[module_id]->ulsch_slot_bitmap[temp_slot / 64], temp_slot)) {
@@ -918,7 +939,7 @@ void nr_get_Msg3alloc(module_id_t module_id,
   else {
     ra->Msg3_tda_id = 0;
     k2 = *pusch_TimeDomainAllocationList->list.array[0]->k2;
-    abs_slot = current_slot + k2 + DELTA[mu]; // msg3 slot according to 8.3 in 38.213
+    abs_slot = current_slot + k2 + DELTA[mu] + num_delay; // msg3 slot according to 8.3 in 38.213//add_yjn
     ra->Msg3_slot = abs_slot % nr_slots_per_frame[mu];
   }
 
@@ -941,8 +962,11 @@ void nr_get_Msg3alloc(module_id_t module_id,
   }
 
   LOG_I(NR_MAC, "[RAPROC] Msg3 slot %d: current slot %u Msg3 frame %u k2 %u Msg3_tda_id %u\n", ra->Msg3_slot, current_slot, ra->Msg3_frame, k2,ra->Msg3_tda_id);
+   int future_ind = get_future_ul_tti_req_ind(RC.nrmac[module_id], ra->Msg3_frame, ra->Msg3_slot);//add_yjn
   uint16_t *vrb_map_UL =
-      &RC.nrmac[module_id]->common_channels[CC_id].vrb_map_UL[ra->Msg3_slot * MAX_BWP_SIZE];
+      &RC.nrmac[module_id]->common_channels[CC_id].vrb_map_UL[future_ind * MAX_BWP_SIZE]; //add_yjn
+  // uint16_t *vrb_map_UL =
+      // &RC.nrmac[module_id]->common_channels[CC_id].vrb_map_UL[ra->Msg3_slot * MAX_BWP_SIZE];
 
   int bwpSize = NRRIV2BW(scc->uplinkConfigCommon->initialUplinkBWP->genericParameters.locationAndBandwidth, MAX_BWP_SIZE);
   int bwpStart = NRRIV2PRBOFFSET(scc->uplinkConfigCommon->initialUplinkBWP->genericParameters.locationAndBandwidth, MAX_BWP_SIZE);
@@ -1069,20 +1093,41 @@ void nr_add_msg3(module_id_t module_idP, int CC_id, frame_t frameP, sub_frame_t 
     return;
   }
 
-  const uint16_t mask = SL_to_bitmap(ra->msg3_startsymb, ra->msg3_nrsymb);
-  uint16_t *vrb_map_UL = &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[ra->Msg3_slot * MAX_BWP_SIZE];
+  // const uint16_t mask = SL_to_bitmap(ra->msg3_startsymb, ra->msg3_nrsymb);
+  // uint16_t *vrb_map_UL = &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[ra->Msg3_slot * MAX_BWP_SIZE];
+  // for (int i = 0; i < ra->msg3_nb_rb; ++i) {
+  //   AssertFatal(!(vrb_map_UL[i + ra->msg3_first_rb + ra->msg3_bwp_start] & mask),
+  //               "RB %d in %4d.%2d is already taken, cannot allocate Msg3!\n",
+  //               i + ra->msg3_first_rb,
+  //               ra->Msg3_frame,
+  //               ra->Msg3_slot);
+  //   vrb_map_UL[i + ra->msg3_first_rb + ra->msg3_bwp_start] |= mask;
+  // }
+ int future_ind = get_future_ul_tti_req_ind(mac, ra->Msg3_frame, ra->Msg3_slot);//add_yjn
+  uint16_t *vrb_map_UL =
+      &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[future_ind * MAX_BWP_SIZE];//add_yjn
+  // LOG_I(NR_MAC,"[yjn]the vrb_map_UL slot of msg3 is future_ind(%d)\n",future_ind);//debug_yjn
+  // uint16_t *vrb_map_UL =
+  //     &RC.nrmac[module_idP]->common_channels[CC_id].vrb_map_UL[ra->Msg3_slot * MAX_BWP_SIZE];
+
+  /**************************[yjn]--add_yjn***********************
+   * under certain dalay conditions, we will encounter that pach and msg3 are assigned to the same slot;
+   * here, we delete  AssertFatal and forcibly seize prach's resources.
+   ***************************************************************/
   for (int i = 0; i < ra->msg3_nb_rb; ++i) {
-    AssertFatal(!(vrb_map_UL[i + ra->msg3_first_rb + ra->msg3_bwp_start] & mask),
-                "RB %d in %4d.%2d is already taken, cannot allocate Msg3!\n",
-                i + ra->msg3_first_rb,
-                ra->Msg3_frame,
-                ra->Msg3_slot);
-    vrb_map_UL[i + ra->msg3_first_rb + ra->msg3_bwp_start] |= mask;
+    // AssertFatal(!vrb_map_UL[i + ra->msg3_first_rb + ra->msg3_bwp_start],
+    //             "RB %d in %4d.%2d is already taken, cannot allocate Msg3!\n",
+    //             i + ra->msg3_first_rb,
+    //             ra->Msg3_frame,
+    //             ra->Msg3_slot);
+    vrb_map_UL[i + ra->msg3_first_rb + ra->msg3_bwp_start] |= SL_to_bitmap(ra->msg3_startsymb, ra->msg3_nrsymb);
   }
 
   LOG_D(NR_MAC, "[gNB %d][RAPROC] Frame %d, Slot %d : CC_id %d RA is active, Msg3 in (%d,%d)\n", module_idP, frameP, slotP, CC_id, ra->Msg3_frame, ra->Msg3_slot);
 
-  nfapi_nr_ul_tti_request_t *future_ul_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[CC_id][ra->Msg3_slot];
+  int future_index = get_future_ul_tti_req_ind(mac, ra->Msg3_frame, ra->Msg3_slot);//add_yjn
+  nfapi_nr_ul_tti_request_t *future_ul_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[CC_id][future_index];//add_yjn
+  // nfapi_nr_ul_tti_request_t *future_ul_tti_req = &RC.nrmac[module_idP]->UL_tti_req_ahead[CC_id][ra->Msg3_slot];
   AssertFatal(future_ul_tti_req->SFN == ra->Msg3_frame
               && future_ul_tti_req->Slot == ra->Msg3_slot,
               "future UL_tti_req's frame.slot %d.%d does not match PUSCH %d.%d\n",
@@ -1395,7 +1440,7 @@ void nr_generate_Msg4(module_id_t module_idP, int CC_id, frame_t frameP, sub_fra
 
     NR_ServingCellConfigCommon_t *scc = cc->ServingCellConfigCommon;
     NR_SearchSpace_t *ss = ra->ra_ss;
-
+    const int num_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing]; //add_yjn
     NR_ControlResourceSet_t *coreset = ra->coreset;
     AssertFatal(coreset!=NULL,"Coreset cannot be null for RA-Msg4\n");
 
@@ -1543,9 +1588,10 @@ void nr_generate_Msg4(module_id_t module_idP, int CC_id, frame_t frameP, sub_fra
     }
 
     NR_sched_pucch_t *pucch = &sched_ctrl->sched_pucch[alloc];
-    harq->feedback_slot = pucch->ul_slot;
-    harq->feedback_frame = pucch->frame;
+    harq->feedback_slot = (pucch->ul_slot + num_delay) % num_slots;//add_yjn_test
+    harq->feedback_frame =  (pucch->frame + (pucch->ul_slot + num_delay)/num_slots) % 1024;//add_yjn_test
     harq->tb_size = tb_size;
+    LOG_D(NR_MAC," harq->feedback_frame = %d, harq->feedback_slot = %d\n",harq->feedback_frame, harq->feedback_slot);//add_yjn_debug
 
     uint8_t *buf = (uint8_t *) harq->transportBlock;
     // Bytes to be transmitted

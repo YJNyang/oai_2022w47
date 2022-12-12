@@ -186,7 +186,8 @@ void nr_ue_init_mac(module_id_t module_idP) {
 
     mac->scheduling_info.LCID_status[i] = LCID_EMPTY;
     mac->scheduling_info.LCID_buffer_remain[i] = 0;
-    for (int i=0;i<NR_MAX_HARQ_PROCESSES;i++) mac->first_ul_tx[i]=1;
+    // for (int i=0;i<NR_MAX_HARQ_PROCESSES;i++) mac->first_ul_tx[i]=1;//add_yjn_harq
+    for (int i=0;i<255;i++) mac->first_ul_tx[i]=1;
   }
 }
 
@@ -2177,8 +2178,8 @@ uint8_t get_downlink_ack(NR_UE_MAC_INST_t *mac,
   /* look for dl acknowledgment which should be done on current uplink slot */
   for (int code_word = 0; code_word < number_of_code_word; code_word++) {
 
-    for (int dl_harq_pid = 0; dl_harq_pid < 16; dl_harq_pid++) {
-
+    // for (int dl_harq_pid = 0; dl_harq_pid < 16; dl_harq_pid++) {
+   for (int dl_harq_pid = 0; dl_harq_pid < 64; dl_harq_pid++) {
       current_harq = &mac->dl_harq_info[dl_harq_pid];
 
       if (current_harq->active) {
@@ -3420,7 +3421,11 @@ static uint8_t nr_extract_dci_info(NR_UE_MAC_INST_t *mac,
         dci_pdu_rel15->rv2.val = (*dci_pdu>>(dci_size-pos))&((1<<dci_pdu_rel15->rv2.nbits)-1);
         // HARQ process number  4bit
         pos+=4;
-        dci_pdu_rel15->harq_pid = (*dci_pdu>>(dci_size-pos))&0xf;
+        static int m = 1;//add_yjn_harq
+        dci_pdu_rel15->harq_pid  = m;
+        m = (m + 1)%64;
+        // dci_pdu_rel15->harq_pid = (*dci_pdu>>(dci_size-pos))&0xf;
+        LOG_D( PHY,"[yjn]:(nr_extract_dci_info), dci_1_1, harq_pid = %d\n",dci_pdu_rel15->harq_pid);//add_yjn_debug_harq
         // Downlink assignment index
         pos+=dci_pdu_rel15->dai[0].nbits;
         dci_pdu_rel15->dai[0].val = (*dci_pdu>>(dci_size-pos))&((1<<dci_pdu_rel15->dai[0].nbits)-1);
@@ -3505,7 +3510,11 @@ static uint8_t nr_extract_dci_info(NR_UE_MAC_INST_t *mac,
 
         // HARQ process number  4bit
         pos+=4;
-        dci_pdu_rel15->harq_pid = (*dci_pdu>>(dci_size-pos))&0xf;
+        static int n = 2;//add_yjn_harq
+        dci_pdu_rel15->harq_pid  = n;
+        n = (n + 1)%255;
+        // dci_pdu_rel15->harq_pid = (*dci_pdu>>(dci_size-pos))&0xf;
+        LOG_D( PHY,"[yjn]:(nr_extract_dci_info), dci_0_1, harq_pid = %d\n",dci_pdu_rel15->harq_pid);//add_yjn_debug_harq
 
         // 1st Downlink assignment index
         pos+=dci_pdu_rel15->dai[0].nbits;

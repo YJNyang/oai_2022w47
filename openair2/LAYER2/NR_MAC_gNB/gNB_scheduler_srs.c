@@ -34,7 +34,8 @@
 #include "common/utils/nr/nr_common.h"
 
 extern RAN_CONTEXT_t RC;
-
+extern int num_delay;  //add_yjn
+int get_future_ul_tti_req_ind(gNB_MAC_INST * gNB, frame_t frame, sub_frame_t slot);//add_yjn
 const uint16_t m_SRS[64] = { 4, 8, 12, 16, 16, 20, 24, 24, 28, 32, 36, 40, 48, 48, 52, 56, 60, 64, 72, 72, 76, 80, 88,
                              96, 96, 104, 112, 120, 120, 120, 128, 128, 128, 132, 136, 144, 144, 144, 144, 152, 160,
                              160, 160, 168, 176, 184, 192, 192, 192, 192, 208, 216, 224, 240, 240, 240, 240, 256, 256,
@@ -176,7 +177,11 @@ void nr_schedule_srs(int module_id, frame_t frame) {
       // Check if UE will transmit the SRS in this frame
       if ( ((frame - offset/n_slots_frame)*n_slots_frame)%period == 0) {
         LOG_D(NR_MAC,"Scheduling SRS reception for %d.%d\n", frame, offset%n_slots_frame);
-        nr_fill_nfapi_srs(module_id, CC_id, UE, offset%n_slots_frame, srs_resource_set, srs_resource);
+        sub_frame_t srs_slot = (offset + num_delay)%n_slots_frame;//add_yjn
+        frame_t srs_frame = (frame + (offset + num_delay)/n_slots_frame)%1024;//add_yjn
+         LOG_D(NR_MAC,"srs_frame = %d, srs_slot = %d\n",srs_frame, srs_slot);
+        int future_index = get_future_ul_tti_req_ind(nrmac, srs_frame, srs_slot);//add_yjn
+        nr_fill_nfapi_srs(module_id, CC_id, UE, future_index, srs_resource_set, srs_resource);
         sched_ctrl->sched_srs.frame = frame;
         sched_ctrl->sched_srs.slot = offset%n_slots_frame;
         sched_ctrl->sched_srs.srs_scheduled = true;

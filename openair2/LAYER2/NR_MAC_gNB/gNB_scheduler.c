@@ -59,21 +59,77 @@
 const uint8_t nr_rv_round_map[4] = { 0, 2, 3, 1 };
 uint16_t nr_pdcch_order_table[6] = { 31, 31, 511, 2047, 2047, 8191 };
 
+extern int num_delay;          //add_yjn
 uint8_t vnf_first_sched_entry = 1;
+
+/* 
+  name: get_last_ul_tti_req_ind
+  input: current scheduler frame,slot
+  function: used to get last ul_tti_req index
+*/
+int get_last_ul_tti_req_ind(gNB_MAC_INST * gNB, frame_t frame, sub_frame_t slot)       //add_yjn
+{
+  NR_ServingCellConfigCommon_t *scc = gNB->common_channels->ServingCellConfigCommon;
+  const int nb_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];
+  int num_slots = 20;
+  if (num_delay <= 10)  num_slots = nb_slots + 10;     //  if 30khz, 40 slot
+  else if (num_delay<=30) num_slots = nb_slots + 30;     //  if 30khz, 80 slot
+  else if (num_delay<=70) num_slots = nb_slots + 70;     //  if 30khz, 160 slot
+  else if (num_delay<=150) num_slots = nb_slots + 150;     //  if 30khz, 320 slot
+  else if (num_delay<=310) num_slots = nb_slots + 310;     //  if 30khz, 320 slot
+  else  LOG_E(NR_MAC,"RTT-slot only support <= 310\n");
+
+  int frame_group = num_slots / nb_slots;
+  int index = 0;
+  if (frame % frame_group == 0 && slot == 0)
+    index = num_slots - 1;  
+  else 
+    index = (frame % frame_group) * nb_slots + slot - 1;
+  LOG_D(MAC,"drop_ul_tti index = %d \n", index);
+  return index;
+}
+
+int get_future_ul_tti_req_ind(gNB_MAC_INST * gNB, frame_t frame, sub_frame_t slot)//add_yjn
+{
+  // int extend_slot[] = {20, 40, 60 , 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300}; //add_yjn  for scs 30kHz, extend slot(only 30kHz)
+  NR_ServingCellConfigCommon_t *scc = gNB->common_channels->ServingCellConfigCommon;
+  const int nb_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];
+  int num_slots = 20;
+  if (num_delay <= 10)  num_slots = nb_slots + 10;     //  if 30khz, 40 slot
+  else if (num_delay<=30) num_slots = nb_slots + 30;     //  if 30khz, 80 slot
+  else if (num_delay<=70) num_slots = nb_slots + 70;     //  if 30khz, 160 slot
+  else if (num_delay<=150) num_slots = nb_slots + 150;     //  if 30khz, 320 slot
+  else if (num_delay<=310) num_slots = nb_slots + 310;     //  if 30khz, 320 slot
+  else  LOG_E(NR_MAC,"RTT-slot only support <= 310\n");
+
+  int frame_group = num_slots / nb_slots;
+  int  index = (frame % frame_group) * nb_slots + slot;
+  LOG_D(MAC,"drop_ul_tti index = %d \n", index);
+  return index;  
+}
 
 void clear_nr_nfapi_information(gNB_MAC_INST * gNB,
                                 int CC_idP,
                                 frame_t frameP,
-                                sub_frame_t slotP){
+                                sub_frame_t slotP){  //调度的时隙为当前时隙加6个时隙，后续称为调度时隙
+  //add_yjn
   NR_ServingCellConfigCommon_t *scc = gNB->common_channels->ServingCellConfigCommon;
-  const int num_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];
-
+  const int nb_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];
+  int num_slots = 20;
+  if (num_delay <= 10)  num_slots = nb_slots + 10;     //  if 30khz, 40 slot
+  else if (num_delay<=30) num_slots = nb_slots + 30;     //  if 30khz, 80 slot
+  else if (num_delay<=70) num_slots = nb_slots + 70;     //  if 30khz, 160 slot
+  else if (num_delay<=150) num_slots = nb_slots + 150;     //  if 30khz, 320 slot
+  else if (num_delay<=310) num_slots = nb_slots + 310;     //  if 30khz, 320 slot
+  else  LOG_E(NR_MAC,"RTT-slot only support <= 310\n");
+  LOG_D(NR_MAC,"[yjn] clear_nr_nfapi_information && UL_tti_req_ahead_initialization\n");
   UL_tti_req_ahead_initialization(gNB, scc, num_slots, CC_idP);
 
   nfapi_nr_dl_tti_request_t    *DL_req = &gNB->DL_req[0];
   nfapi_nr_dl_tti_pdcch_pdu_rel15_t **pdcch = (nfapi_nr_dl_tti_pdcch_pdu_rel15_t **)gNB->pdcch_pdu_idx[CC_idP];
+  int last_ind = get_last_ul_tti_req_ind(gNB, frameP, slotP);//add_yjn
   nfapi_nr_ul_tti_request_t    *future_ul_tti_req =
-    &gNB->UL_tti_req_ahead[CC_idP][(slotP + num_slots - 1) % num_slots];
+      &gNB->UL_tti_req_ahead[CC_idP][last_ind];           //add_yjn   //当前组内时隙的上一时隙的future_ul_tti_req的pdu被清空
   nfapi_nr_ul_dci_request_t    *UL_dci_req = &gNB->UL_dci_req[0];
   nfapi_nr_tx_data_request_t   *TX_req = &gNB->TX_req[0];
 
@@ -90,18 +146,26 @@ void clear_nr_nfapi_information(gNB_MAC_INST * gNB,
   UL_dci_req[CC_idP].Slot                        = slotP;
   UL_dci_req[CC_idP].numPdus                     = 0;
 
+ 
+  int frame_group = num_slots / nr_slots_per_frame[*scc->ssbSubcarrierSpacing]; //add_yjn
   /* advance last round's future UL_tti_req to be ahead of current frame/slot */
-  future_ul_tti_req->SFN = (slotP == 0 ? frameP : frameP + 1) % 1024;
-  LOG_D(NR_MAC, "In %s: UL_tti_req_ahead SFN.slot = %d.%d for slot %d \n", __FUNCTION__, future_ul_tti_req->SFN, future_ul_tti_req->Slot, (slotP + num_slots - 1) % num_slots);
+  // future_ul_tti_req->SFN = (slotP == 0 ? frameP + 1: frameP + 2) % 1024;  //add_yjn  //上一时隙
+  future_ul_tti_req->SFN = (slotP == 0 ? frameP + frame_group - 1: frameP + frame_group) % 1024;  //add_yjn  //上一时隙
+  // LOG_D(NR_MAC, "In %s: UL_tti_req_ahead SFN.slot = %d.%d for slot %d \n", __FUNCTION__, future_ul_tti_req->SFN, future_ul_tti_req->Slot, (slotP + num_slots - 1) % num_slots);
   /* future_ul_tti_req->Slot is fixed! */
   future_ul_tti_req->n_pdus = 0;
   future_ul_tti_req->n_ulsch = 0;
   future_ul_tti_req->n_ulcch = 0;
   future_ul_tti_req->n_group = 0;
-
   /* UL_tti_req is a simple pointer into the current UL_tti_req_ahead, i.e.,
-   * it walks over UL_tti_req_ahead in a circular fashion */
-  gNB->UL_tti_req[CC_idP] = &gNB->UL_tti_req_ahead[CC_idP][slotP];
+   * it walks over UL_tti_req_ahead in a circular fashion */  //gNB->UL_tti_req[CC_idP] = &gNB->UL_tti_req_ahead[CC_idP][slotP]; //add_yjn
+   
+  /*
+  *  Since the ul_tti_req_ahead array is now extended from 20 to 40, 
+  *  but the slot is always looped 0-20, special processing is done here
+  */
+  int future_ind = get_future_ul_tti_req_ind(gNB, frameP, slotP);  //add_yjn
+  gNB->UL_tti_req[CC_idP] = &gNB->UL_tti_req_ahead[CC_idP][future_ind];  //add_yjn
 
   TX_req[CC_idP].Number_of_PDUs                  = 0;
 
@@ -156,10 +220,15 @@ void gNB_dlsch_ulsch_scheduler(module_id_t module_idP,
     memset(cc[CC_id].vrb_map, 0, sizeof(uint16_t) * MAX_BWP_SIZE);
     // clear last scheduled slot's content (only)!
     const int num_slots = nr_slots_per_frame[*scc->ssbSubcarrierSpacing];
-    const int last_slot = (slot + num_slots - 1) % num_slots;
+    // const int last_slot = (slot + num_slots - 1) % num_slots;
+    // uint16_t *vrb_map_UL = cc[CC_id].vrb_map_UL;
+    // memcpy(&vrb_map_UL[last_slot * MAX_BWP_SIZE], &RC.nrmac[module_idP]->ulprbbl, sizeof(uint16_t) * MAX_BWP_SIZE);
+    LOG_D(NR_MAC,"[yjn] frame = %d, slot = %d\n",frame, slot);
+    const int last_slot = get_last_ul_tti_req_ind(gNB, frame, slot);  //add_yjn
     uint16_t *vrb_map_UL = cc[CC_id].vrb_map_UL;
     memcpy(&vrb_map_UL[last_slot * MAX_BWP_SIZE], &RC.nrmac[module_idP]->ulprbbl, sizeof(uint16_t) * MAX_BWP_SIZE);
-
+    // memset(&vrb_map_UL[last_slot * MAX_BWP_SIZE], 0, sizeof(uint16_t) * MAX_BWP_SIZE); //清空组内时隙号的上一时隙号的vrb_map_UL； //add_yjn
+    
     clear_nr_nfapi_information(RC.nrmac[module_idP], CC_id, frame, slot);
 
     /*VNF first entry into scheduler. Since frame numbers for future_ul_tti_req of some future slots 

@@ -82,7 +82,7 @@ static int DEFRUTPCORES[] = {-1,-1,-1,-1};
 #include <nfapi/oai_integration/vendor_ext.h>
 
 extern int oai_exit;
-
+extern int rfsimu_if_flag;   //add_yjn
 extern struct timespec timespec_sub(struct timespec lhs, struct timespec rhs);
 extern struct timespec timespec_add(struct timespec lhs, struct timespec rhs);
 extern void  nr_phy_free_RU(RU_t *);
@@ -851,8 +851,14 @@ void fill_rf_config(RU_t *ru, char *rf_config_file) {
 
   for (i=0; i<ru->nb_tx; i++) {
     if (ru->if_frequency == 0) {
+      if(rfsimu_if_flag){
+        cfg->tx_freq[i] = (double)2800000000;//add_yjn
+        cfg->rx_freq[i] = (double)2800000000;
+      }
+      else{
       cfg->tx_freq[i] = (double)fp->dl_CarrierFreq;
       cfg->rx_freq[i] = (double)fp->ul_CarrierFreq;
+      }
     } else if (ru->if_freq_offset) {
       cfg->tx_freq[i] = (double)(ru->if_frequency);
       cfg->rx_freq[i] = (double)(ru->if_frequency + ru->if_freq_offset);

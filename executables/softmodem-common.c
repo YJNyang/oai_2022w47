@@ -48,7 +48,8 @@ char *worker_config=NULL;
 int usrp_tx_thread = 0;
 int ldpc_offload_flag=0;
 uint8_t nfapi_mode=0;
-
+int num_delay = 11; //add_yjn       //delay 20 slot for scs 30kHz 
+int rfsimu_if_flag = 0; //add_yjn
 static mapping softmodem_funcs[] = MAPPING_SOFTMODEM_FUNCTIONS;
 static struct timespec start;
 

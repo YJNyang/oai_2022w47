@@ -107,7 +107,7 @@ instance_t DUuniqInstance=0;
 
 RAN_CONTEXT_t RC;
 int oai_exit = 0;
-
+extern int                rfsimu_if_flag;//add_yjn
 
 extern int16_t  nr_dlsch_demod_shift;
 static int      tx_max_power[MAX_NUM_CCs] = {0};
@@ -355,7 +355,10 @@ void init_openair0(void) {
       duplex_mode[openair0_cfg[card].duplex_mode]);
 
     nr_get_carrier_frequencies(PHY_vars_UE_g[0][0], &dl_carrier, &ul_carrier);
-
+    if(rfsimu_if_flag){
+      dl_carrier = 2800000000;//add_yjn
+      ul_carrier = 2800000000;
+    }
     nr_rf_card_config_freq(&openair0_cfg[card], ul_carrier, dl_carrier, freq_off);
     nr_rf_card_config_gain(&openair0_cfg[card], rx_gain_off);
 
