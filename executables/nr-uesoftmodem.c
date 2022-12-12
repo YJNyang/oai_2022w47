@@ -144,7 +144,7 @@ openair0_config_t openair0_cfg[MAX_CARDS];
 int16_t           node_synch_ref[MAX_NUM_CCs];
 int               otg_enabled;
 double            cpuf;
-
+int usrp_freq_off = 0; //add_yjn
 
 int          chain_offset = 0;
 int           card_offset = 0;
@@ -322,9 +322,9 @@ void set_options(int CC_id, PHY_VARS_NR_UE *UE){
 
 }
 
-void init_openair0(void) {
+void init_openair0(int freq_off) {
   int card;
-  int freq_off = 0;
+  // int freq_off = 0;
   NR_DL_FRAME_PARMS *frame_parms = &PHY_vars_UE_g[0][0]->frame_parms;
 
   for (card=0; card<MAX_CARDS; card++) {
@@ -360,6 +360,10 @@ void init_openair0(void) {
       ul_carrier = 2800000000;
     }
     nr_rf_card_config_freq(&openair0_cfg[card], ul_carrier, dl_carrier, freq_off);
+    if(freq_off != 0){//add_yjn
+      dl_carrier = dl_carrier + freq_off;
+      ul_carrier = ul_carrier + freq_off;
+    }
     nr_rf_card_config_gain(&openair0_cfg[card], rx_gain_off);
 
     openair0_cfg[card].configFilename = get_softmodem_params()->rf_config_file;
@@ -521,7 +525,8 @@ int main( int argc, char **argv ) {
       init_nr_ue_vars(UE[CC_id], 0, abstraction_flag);
     }
 
-    init_openair0();
+    // init_openair0();
+    init_openair0(usrp_freq_off);
     // init UE_PF_PO and mutex lock
     pthread_mutex_init(&ue_pf_po_mutex, NULL);
     memset (&UE_PF_PO[0][0], 0, sizeof(UE_PF_PO_t)*NUMBER_OF_UE_MAX*MAX_NUM_CCs);
