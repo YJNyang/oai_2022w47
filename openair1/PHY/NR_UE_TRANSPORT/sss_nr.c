@@ -572,11 +572,11 @@ int rx_sss_nr(PHY_VARS_NR_UE *ue, UE_nr_rxtx_proc_t *proc, int32_t *tot_metric, 
     re += d[i]*sss[2*i];
     im += d[i]*sss[2*i+1];
   }
-  double ffo_sss = atan2(im,re)/M_PI/4.3;
+  double ffo_sss = -atan2(im,re)/M_PI/4.3;
   *freq_offset_sss = (int)(ffo_sss*frame_parms->subcarrier_spacing);
 
   double ffo_pss = ((double)ue->common_vars.freq_offset)/frame_parms->subcarrier_spacing;
-  LOG_I(NR_PHY, "ffo_pss %f (%i Hz), ffo_sss %f (%i Hz),  ffo_pss+ffo_sss %f (%i Hz)\n",
+  LOG_I(NR_PHY, "cfo_pss %f (%i Hz), cfo_sss %f (%i Hz),  cfo_pss+cfo_sss %f (%i Hz)\n",
          ffo_pss, (int)(ffo_pss*frame_parms->subcarrier_spacing), ffo_sss, *freq_offset_sss, ffo_pss+ffo_sss, (int)((ffo_pss+ffo_sss)*frame_parms->subcarrier_spacing));
 
   return(0);

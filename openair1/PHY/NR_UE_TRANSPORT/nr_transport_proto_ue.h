@@ -791,6 +791,8 @@ int nr_pbch_detection(UE_nr_rxtx_proc_t *proc,
 
 int dump_ue_stats(PHY_VARS_NR_UE *phy_vars_ue, UE_nr_rxtx_proc_t *proc, char* buffer, int length, runmode_t mode, int input_level_dBm);
 
+void fre_offset_compensation_simd(int32_t* rxdata, int start, int end, double off_angle);
+
 /*!
   \brief This function performs the initial cell search procedure - PSS detection, SSS detection and PBCH detection.  At the
   end, the basic frame parameters are known (Frame configuration - TDD/FDD and cyclic prefix length,
@@ -829,6 +831,11 @@ void nr_rf_card_config_gain(openair0_config_t *openair0_cfg,
 void nr_rf_card_config_freq(openair0_config_t *openair0_cfg,
                             uint64_t ul_Carrier,
                             uint64_t dl_Carrier,
+                            int freq_offset);
+
+void nr_rf_card_config_freq_doppler(openair0_config_t *openair0_cfg,
+                            uint64_t ul_carrier,
+                            uint64_t dl_carrier,
                             int freq_offset);
 
 void nr_pdcch_unscrambling(int16_t *z,

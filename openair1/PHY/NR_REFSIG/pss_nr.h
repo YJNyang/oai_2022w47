@@ -112,6 +112,17 @@ EXTERN int16_t *primary_synchro_time_nr[NUMBER_PSS_SEQUENCE]
 = { NULL, NULL, NULL}
 #endif
 ;
+EXTERN int16_t *dpss_seq_nr[NUMBER_DPSS_SEQUENCE]
+#ifdef INIT_VARIABLES_PSS_NR_H
+= { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}
+#endif
+;
+EXTERN int16_t *dpss_equ_seq[NUMBER_DPSS_SEQUENCE*NUMBER_PSS_SEQUENCE]
+#ifdef INIT_VARIABLES_PSS_NR_H
+= { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}
+#endif
+;
+EXTERN int16_t *primary_synchro_time_nr_fo;
 
 /* profiling structure */
 EXTERN time_stats_t generic_time[TIME_LAST];
@@ -132,7 +143,7 @@ int pss_search_time_nr(int **rxdata, ///rx data in time domain
                        int is,
                        int *eNB_id,
 		       int *f_off);
-
+void fre_offset_compensation_simd(int32_t* rxdata, int start, int end, double off_angle);
 #endif
 #undef EXTERN
 

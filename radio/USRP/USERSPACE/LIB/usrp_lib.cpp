@@ -306,6 +306,7 @@ static int trx_usrp_start(openair0_device *device) {
 
 static void trx_usrp_send_end_of_burst(usrp_state_t *s) {
   // if last packet sent was end of burst no need to do anything. otherwise send end of burst packet
+  LOG_I(HW, "Sending end of burst\n");
   if (s->tx_md.end_of_burst)
     return;
 
@@ -319,6 +320,7 @@ static void trx_usrp_send_end_of_burst(usrp_state_t *s) {
     buffs.push_back(&dummy); // same buffer for each channel
 
   s->tx_stream->send(buffs, 0, s->tx_md);
+  LOG_I(HW, "Sent end of burst\n");
 }
 
 static void trx_usrp_write_reset(openair0_thread_t *wt);
@@ -340,9 +342,13 @@ static void trx_usrp_end(openair0_device *device) {
     trx_usrp_write_reset(&device->write_thread);
 
   trx_usrp_send_end_of_burst(s);
+  LOG_I(HW, "~tx_streamer()\n");
   s->tx_stream->~tx_streamer();
+  LOG_I(HW, "~rx_streamer()\n");
   s->rx_stream->~rx_streamer();
-  s->usrp->~multi_usrp();
+  // LOG_I(HW, "~multi_usrp()\n");
+  // s->usrp->~multi_usrp();
+  LOG_I(HW, "free(s)\n");
   free(s);
   device->priv = NULL;
   device->trx_start_func = NULL;
@@ -637,6 +643,7 @@ int trx_usrp_write_init(openair0_device *device){
 }
 
 static void trx_usrp_write_reset(openair0_thread_t *wt) {
+  LOG_I(HW, "stopping USRP write thread\n");
   pthread_mutex_lock(&wt->mutex_write);
   wt->count_write = 1;
   wt->write_thread_exit = true;

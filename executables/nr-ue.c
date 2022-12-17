@@ -105,6 +105,30 @@ typedef enum {
 
 queue_t nr_rach_ind_queue;
 
+void cfo_compensation(int32_t* rxdata, int start, int end, double off_angle){
+  double re,im;
+  int BlockSize = end - start;
+  int alignedstart = 8-(start%8);
+  int alignedend = BlockSize-(end%8);
+  
+  for(int n=0; n<alignedstart; n++){
+    re = ((double)(((short *)rxdata))[2*n]);
+    im = ((double)(((short *)rxdata))[2*n+1]);
+    ((short *)rxdata)[2*n] = (short)(round(re*cos(n*off_angle) - im*sin(n*off_angle)));
+    ((short *)rxdata)[2*n+1] = (short)(round(re*sin(n*off_angle) + im*cos(n*off_angle)));
+  }
+
+  fre_offset_compensation_simd(rxdata,alignedstart,alignedend,off_angle);
+
+  for(int n=alignedend; n<BlockSize; n++){
+      re = ((double)(((short *)rxdata))[2*n]);
+      im = ((double)(((short *)rxdata))[2*n+1]);
+      ((short *)rxdata)[2*n] = (short)(round(re*cos(n*off_angle) - im*sin(n*off_angle)));
+      ((short *)rxdata)[2*n+1] = (short)(round(re*sin(n*off_angle) + im*cos(n*off_angle)));
+  } 
+  return;
+}
+
 static void *NRUE_phy_stub_standalone_pnf_task(void *arg);
 
 static size_t dump_L1_UE_meas_stats(PHY_VARS_NR_UE *ue, char *output, size_t max_len)
@@ -555,15 +579,17 @@ static void UE_synch(void *arg) {
 
       uint64_t dl_carrier, ul_carrier;
       nr_get_carrier_frequencies(UE, &dl_carrier, &ul_carrier);
+      dl_carrier=openair0_cfg->rx_freq[0]; //doppler shift test
+      ul_carrier=openair0_cfg->tx_freq[0]; //doppler shift test
 
       if (nr_initial_sync(&syncD->proc, UE, 2, get_softmodem_params()->sa) == 0) {
-        freq_offset = UE->common_vars.freq_offset; // frequency offset computed with pss in initial sync
+        freq_offset = -UE->common_vars.freq_offset; // frequency offset computed with pss in initial sync
         hw_slot_offset = ((UE->rx_offset<<1) / UE->frame_parms.samples_per_subframe * UE->frame_parms.slots_per_subframe) +
                          round((float)((UE->rx_offset<<1) % UE->frame_parms.samples_per_subframe)/UE->frame_parms.samples_per_slot0);
 
         // rerun with new cell parameters and frequency-offset
         // todo: the freq_offset computed on DL shall be scaled before being applied to UL
-        nr_rf_card_config_freq(&openair0_cfg[UE->rf_map.card], ul_carrier, dl_carrier, freq_offset);
+        nr_rf_card_config_freq_doppler(&openair0_cfg[UE->rf_map.card], ul_carrier, dl_carrier, freq_offset);
 
         LOG_I(PHY,"Got synch: hw_slot_offset %d, carrier off %d Hz, rxgain %f (DL %f Hz, UL %f Hz)\n",
               hw_slot_offset,
@@ -572,7 +598,7 @@ static void UE_synch(void *arg) {
               openair0_cfg[UE->rf_map.card].rx_freq[0],
               openair0_cfg[UE->rf_map.card].tx_freq[0]);
 
-        UE->rfdevice.trx_set_freq_func(&UE->rfdevice,&openair0_cfg[0]);
+        // UE->rfdevice.trx_set_freq_func(&UE->rfdevice,&openair0_cfg[0]);
         if (UE->UE_scan_carrier == 1) {
           UE->UE_scan_carrier = 0;
         } else {
@@ -979,6 +1005,31 @@ void *UE_thread(void *arg) {
     curMsg.proc.timestamp_tx = timestamp+
       UE->frame_parms.get_samples_slot_timestamp(slot_nr,&UE->frame_parms,DURATION_RX_TO_TX) 
       - firstSymSamp;
+    
+    // digital compensation of FFO for SSB symbols
+    if (UE->UE_fo_compensation){
+      start_meas(&UE->generic_stat);
+      int start_rx = UE->frame_parms.get_samples_slot_timestamp(slot_nr,&UE->frame_parms,0);
+      int end_rx = start_rx + UE->frame_parms.get_samples_per_slot(slot_nr, &UE->frame_parms);
+      int start_tx = UE->frame_parms.get_samples_slot_timestamp(((slot_nr + DURATION_RX_TO_TX - NR_RX_NB_TH)%nb_slot_frame),&UE->frame_parms,0);
+      int end_tx = start_tx + writeBlockSize;
+      double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
+      double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
+
+      for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++){ // 下行补偿
+          int32_t* rxdata_start = (int32_t*)&(UE->common_vars.rxdata[i][start_rx]);
+          cfo_compensation(rxdata_start,start_rx,end_rx, off_angle); 
+      }
+      // TODO: 修改OAI大频偏测试方案,调整gNB的Tx/Rx freq.  
+      for (int i=0; i<UE->frame_parms.nb_antennas_tx; i++){// 上行预补偿 (当前测试环境下ul_offangle = -dl_offangle, 接信道模拟器ul_offangle = -dl_offangle)
+          int32_t* txdata_start = (int32_t*)&UE->common_vars.txdata[i][start_tx];
+          cfo_compensation(txdata_start,start_tx,end_tx, off_angle); 
+      }
+      stop_meas(&UE->generic_stat);
+      int duration_ms = UE->generic_stat.p_time/(cpuf*1000.0);
+      LOG_D(PHY,"[SYNC CFO] DL COMPENSATE %d, UL COMPENSATE %d\n",UE->track_sync_fo,-UE->track_sync_fo);
+      LOG_D(PHY,"SYNC CFO COMPENSATE execution duration %4d microseconds \n", duration_ms);
+    }
 
     UE_processing(&curMsg);
 
