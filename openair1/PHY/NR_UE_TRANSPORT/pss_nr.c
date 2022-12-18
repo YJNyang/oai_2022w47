@@ -625,6 +625,32 @@ void decimation_synchro_nr(PHY_VARS_NR_UE *PHY_vars_UE, int rate_change, int **r
 #endif
 }
 
+int pss_track_synchro_nr(PHY_VARS_NR_UE *PHY_vars_UE, int position,int length, int rate_change)
+{
+  NR_DL_FRAME_PARMS *frame_parms = &(PHY_vars_UE->frame_parms);
+  int synchro_position;
+  int **rxdata = NULL;
+
+  if (rate_change != 1) {
+    rxdata = (int32_t**)malloc16(frame_parms->nb_antennas_rx*sizeof(int32_t*));
+    for (int aa=0; aa < frame_parms->nb_antennas_rx; aa++) {
+      rxdata[aa] = (int32_t*) malloc16_clear( (frame_parms->samples_per_frame+8192)*sizeof(int32_t));
+    }
+  }
+  else {
+    rxdata = PHY_vars_UE->common_vars.rxdata;
+  }
+
+  synchro_position = pss_search_time_track_nr(rxdata,
+                                        frame_parms,
+					                              position,
+                                        length,
+                                        PHY_vars_UE->common_vars.eNb_id,
+					(int *)&PHY_vars_UE->track_sync_fo);
+
+  return synchro_position;
+}
+
 /*******************************************************************
 *
 * NAME :         pss_synchro_nr
@@ -853,16 +879,12 @@ int pss_search_time_nr(int **rxdata, ///rx data in time domain
 
 // 定时估计结果：峰值位置 peak_position ；相关峰值 peak_value；相关运算累加avg[pss_index]；小区识别号2 pss_source
 // ===========================================  SNR计算   ===========================================
-
-
-  // avg[pss_source*NUMBER_DPSS_SEQUENCE+dpss_source]/=(length/4);
-  
   uint16_t syncSNR=dB_fixed64(peak_value)-dB_fixed64(avg[pss_source]);
 
   LOG_I(PHY,"[UE_SYNC] nr_synchro_time: Sync source = %d, Peak found at pos %d, val = %llu (%d dB) avg %d dB\n", pss_source, peak_position, (unsigned long long)peak_value, dB_fixed64(peak_value),dB_fixed64(avg[pss_source]));
   LOG_I(PHY,"[UE_SYNC] SyncSNR=%d\n",syncSNR);
   if (syncSNR < 8) {/* SNR */
-    LOG_I(PHY,"[UE_SYNC] Sync SNR is too low, can't find PSS Position.\n");
+    LOG_I(PHY,"[TRACK SYNC] Sync SNR = %d is too low, can't find PSS Position.\n",syncSNR);
     return(-1);
   }
 
@@ -966,4 +988,143 @@ LOG_I(PHY,"[UE_SYNC_CFO]pss_cfo=%f( %dHZ)] , carrier Freq=%f\n",ffo_cp+ifo_pss,*
 
   return(peak_position);
 }
+
+int pss_search_time_track_nr(int **rxdata, ///rx data in time domain
+                       NR_DL_FRAME_PARMS *frame_parms,
+                       int position,
+                       int length,
+                       int eNB_id,
+		                   int *f_off)
+{
+   unsigned int n, ar, peak_position;
+  int64_t peak_value;
+  int64_t result;
+  int64_t avg=0;
+  int winPos = position-(length>>1);
+  peak_value = 0;
+  peak_position = 0;
+  AssertFatal(length>0,"illegal length %d\n",length);
+
+// ===========================================  PSS定时估计   ===========================================
+  for (n=0; n < length; n+=4) { //
+
+    int64_t pss_corr_ue=0;
+    /* calculate dot product of primary_synchro_time_nr and rxdata[ar][n]
+      * (ar=0..nb_ant_rx) and store the sum in temp[n]; */
+    for (ar=0; ar<frame_parms->nb_antennas_rx; ar++) {
+      /* perform correlation of rx data and pss sequence ie it is a dot product */
+      result  = dot_product64((short*)primary_synchro_time_nr[eNB_id],
+                              (short*)&(rxdata[ar][n+winPos]),
+                              frame_parms->ofdm_symbol_size,
+                              pss_corr_shift);
+      pss_corr_ue += abs64(result);
+    }
+    /* calculate the absolute value of sync_corr[n] */
+    avg+=pss_corr_ue;
+    if (pss_corr_ue > peak_value) {
+      peak_value = pss_corr_ue;
+      peak_position = n;  
+    }
+  }
+
+  // ===========================================  SNR计算   ===========================================
+  avg /= length>>2;
+  uint16_t trackSNR=dB_fixed64(peak_value)-dB_fixed64(avg);
+  if (trackSNR < 8) {/* SNR */
+    LOG_I(PHY,"[TRACK SYNC] Sync SNR = %d is too low, can't find PSS Position.\n",trackSNR);
+    return(-1);
+  }
+  /* add the start offset in frame */
+  peak_position += winPos; // add_zjw
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PSS FFO EST <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<//
+
+     int64_t result1,result2;
+     double ffo_pss=0;
+	  // Computing cross-correlation at peak on half the symbol size for first half of data
+	  result1  = dot_product64((short*)primary_synchro_time_nr[eNB_id], 
+				  (short*) &(rxdata[0][peak_position]), 
+				  frame_parms->ofdm_symbol_size>>1, 
+				  pss_corr_shift);
+	  // Computing cross-correlation at peak on half the symbol size for data shifted by half symbol size 
+	  // as it is real and complex it is necessary to shift by a value equal to symbol size to obtain such shift
+	  result2  = dot_product64((short*)primary_synchro_time_nr[eNB_id]+(frame_parms->ofdm_symbol_size), 
+				  (short*) &(rxdata[0][peak_position])+frame_parms->ofdm_symbol_size, 
+				  frame_parms->ofdm_symbol_size>>1, 
+				  pss_corr_shift);
+
+	  int64_t re1,re2,im1,im2;
+	  re1=((int*) &result1)[0];
+	  re2=((int*) &result2)[0];
+	  im1=((int*) &result1)[1];
+	  im2=((int*) &result2)[1];
+
+ 	  // estimation of fractional frequency offset: angle[(result1)'*(result2)]/pi
+	  ffo_pss=-atan2(re1*im2-re2*im1,re1*re2+im1*im2)/M_PI;
+    LOG_D(PHY,"[UE_SYNC_FFO_PSS]  FFO_PSS Est res:  ffo_pss=%f \n",ffo_pss);
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> CP FFO EST <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<//
+
+    // double ffo_cp=0;
+    // int64_t ffo_cp_corr = 0;
+    // int64_t ffo_cp_est = 0;
+    // int offsetUnit = frame_parms->nb_prefix_samples + frame_parms->ofdm_symbol_size;
+    // int PosStart = peak_position - frame_parms->nb_prefix_samples;  
+    // int cp_corr_shift = frame_parms->ffo_corr_shift >0 ? frame_parms->ffo_corr_shift : pss_corr_shift;
+    //     for (int i = 0; i < 2; i++){
+    //         ffo_cp_corr = dot_product64((short*)&(rxdata[0][PosStart+i*offsetUnit]), 
+    //                                   (short*)&(rxdata[0][PosStart+i*offsetUnit+frame_parms->ofdm_symbol_size]), // 修改：调用前完成数据截取
+    //                                   frame_parms->nb_prefix_samples,
+    //                                   cp_corr_shift);
+    //       ((int32_t*) &ffo_cp_est)[0] = ((int32_t*) &ffo_cp_est)[0]+((int32_t*) &ffo_cp_corr)[0];
+    //       ((int32_t*) &ffo_cp_est)[1] = ((int32_t*) &ffo_cp_est)[1]+((int32_t*) &ffo_cp_corr)[1];
+    //     }
+    //     int32_t re3,im3;
+    //     re3=((int32_t*) &ffo_cp_est)[0];
+    //     im3=((int32_t*) &ffo_cp_est)[1];
+    //     ffo_cp=-atan2(im3,re3)/2/M_PI; // ffo=-angle()/2/pi
+
+  // ===========================================  输出量计算   =========================================== 
+    *f_off += ffo_pss*frame_parms->subcarrier_spacing;  
+    LOG_I(PHY,"[TRC SYNC] SNR=%d, sync_pos=%d(%d), ffo_cp=%f, cfo_track=%d \n",trackSNR,peak_position,length,ffo_pss*frame_parms->subcarrier_spacing,*f_off);
+    return(peak_position);
+}
+
+int pss_freq_track_nr(int **rxdata, ///rx data in time domain
+                       NR_DL_FRAME_PARMS *frame_parms,
+                       int position,
+                       int eNB_id,
+		                   int *f_off)
+{
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PSS FFO EST <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<//
+     int64_t result1,result2;
+     double ffo_pss=0;
+	  // Computing cross-correlation at peak on half the symbol size for first half of data
+	  result1  = dot_product64((short*)primary_synchro_time_nr[eNB_id], 
+				  (short*) &(rxdata[0][position]), 
+				  frame_parms->ofdm_symbol_size>>1, 
+				  pss_corr_shift);
+	  // Computing cross-correlation at peak on half the symbol size for data shifted by half symbol size 
+	  // as it is real and complex it is necessary to shift by a value equal to symbol size to obtain such shift
+	  result2  = dot_product64((short*)primary_synchro_time_nr[eNB_id]+(frame_parms->ofdm_symbol_size), 
+				  (short*) &(rxdata[0][position])+frame_parms->ofdm_symbol_size, 
+				  frame_parms->ofdm_symbol_size>>1, 
+				  pss_corr_shift);
+
+	  int64_t re1,re2,im1,im2;
+	  re1=((int*) &result1)[0];
+	  re2=((int*) &result2)[0];
+	  im1=((int*) &result1)[1];
+	  im2=((int*) &result2)[1];
+
+ 	  // estimation of fractional frequency offset: angle[(result1)'*(result2)]/pi
+	  ffo_pss=-atan2(re1*im2-re2*im1,re1*re2+im1*im2)/M_PI;
+    LOG_D(PHY,"[UE_SYNC_FFO_PSS]  FFO_PSS Est res:  ffo_pss=%f \n",ffo_pss);
+
+  // ===========================================  输出量计算   =========================================== 
+    *f_off += ffo_pss*frame_parms->subcarrier_spacing;  
+    // LOG_I(PHY,"[TRC SYNC] SNR=%d, sync_pos=%d(%d), ffo_cp=%f, cfo_track=%d \n",trackSNR,peak_position,length,ffo_pss*frame_parms->subcarrier_spacing,*f_off);
+    return(*f_off);
+}
+
 

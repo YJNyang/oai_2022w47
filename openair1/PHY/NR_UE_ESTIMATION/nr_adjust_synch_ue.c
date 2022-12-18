@@ -26,7 +26,7 @@
 
 #include "executables/softmodem-common.h"
 #include "common/utils/LOG/vcd_signal_dumper.h"
-
+#include "PHY/NR_UE_TRANSPORT/nr_transport_proto_ue.h"
 //#define DEBUG_PHY
 
 // Adjust location synchronization point to account for drift
@@ -115,8 +115,11 @@ void nr_adjust_synch_ue(NR_DL_FRAME_PARMS *frame_parms,
     }
   }
 
-#ifdef DEBUG_PHY
-  LOG_I(PHY,"AbsSubframe %d: diff = %i, rx_offset (final) = %i : clear = %d, max_pos = %d, max_pos_fil = %d, max_val = %d, sync_pos %d\n",
+  /* 频率跟踪 */
+  int freq_track = nr_track_sync(ue, ue->ssb_pos_frame+ue->max_pos_fil, 0,1);
+
+
+  LOG_D(PHY,"AbsSubframe %d: diff = %i, rx_offset (final) = %i : clear = %d, max_pos = %d, max_pos_fil = %d, max_val = %d, sync_pos = %d, freq_track = %d\n",
         subframe,
         diff,
         ue->rx_offset,
@@ -124,8 +127,8 @@ void nr_adjust_synch_ue(NR_DL_FRAME_PARMS *frame_parms,
         max_pos,
         ue->max_pos_fil,
         max_val,
-        sync_pos);
-#endif //DEBUG_PHY
+        sync_pos,
+        freq_track);
 
   VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_UE_ADJUST_SYNCH, VCD_FUNCTION_OUT);
 }

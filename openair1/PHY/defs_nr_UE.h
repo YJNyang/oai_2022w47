@@ -748,7 +748,7 @@ typedef struct {
   SLIST_HEAD(ral_thresholds_lte_poll_s, ral_threshold_phy_t) ral_thresholds_lte_polled[RAL_LINK_PARAM_LTE_MAX];
 #endif
   int track_sync_fo; 
-  int sync_pos_frame;
+  int ssb_pos_frame;
   int initial_sync_pos;
   int max_delay_offset;
   int delay_offset;

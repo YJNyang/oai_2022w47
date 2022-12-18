@@ -293,6 +293,7 @@ int nr_initial_sync(UE_nr_rxtx_proc_t *proc,
     if (sync_pos < fp->nb_prefix_samples)
       continue;
 
+    ue->initial_sync_pos = is*fp->samples_per_frame + sync_pos;
     ue->ssb_offset = sync_pos - fp->nb_prefix_samples;
 
 #ifdef DEBUG_INITIAL_SYNCH
@@ -381,6 +382,7 @@ int nr_initial_sync(UE_nr_rxtx_proc_t *proc,
         sync_pos_frame = n_symb_prefix0*(fp->ofdm_symbol_size + fp->nb_prefix_samples0)+(ue->symbol_offset-n_symb_prefix0)*(fp->ofdm_symbol_size + fp->nb_prefix_samples);
         // for a correct computation of frame number to sync with the one decoded at MIB we need to take into account in which of the n_frames we got sync
         ue->init_sync_frame = n_frames - 1 - is;
+        ue->ssb_pos_frame = sync_pos_frame + fp->nb_prefix_samples;
 
         // compute the scramblingID_pdcch and the gold pdcch
         ue->scramblingID_pdcch = fp->Nid_cell;
@@ -624,3 +626,31 @@ int nr_initial_sync(UE_nr_rxtx_proc_t *proc,
   return ret;
 }
 
+int nr_track_sync(PHY_VARS_NR_UE *ue,
+                    int position,int length,bool ffo_only)
+{
+    int32_t sync_pos;
+    int freq_track;
+    NR_DL_FRAME_PARMS *fp = &ue->frame_parms;
+
+    if(ffo_only !=1){
+      sync_pos = pss_track_synchro_nr(ue, position, length, NO_RATE_CHANGE);
+      if(sync_pos<0) return -1;
+      /* Calculate SSB position */
+      if (sync_pos >= fp->nb_prefix_samples)
+                  ue->ssb_offset = sync_pos - fp->nb_prefix_samples;
+      else
+            ue->ssb_offset = sync_pos + (fp->samples_per_subframe * 10) - fp->nb_prefix_samples;
+      /* in case ssb in the second frame */
+      if (ue->ssb_offset > ue->frame_parms.samples_per_frame)   ue->ssb_offset +=  -ue->frame_parms.samples_per_frame;       
+      return 0;
+    }else{
+      freq_track = pss_freq_track_nr(ue->common_vars.rxdata, ///rx data in time domain
+                       fp,
+                       position,
+                       ue->common_vars.eNb_id,
+		                   (int *)&ue->track_sync_fo);
+      return freq_track;
+    }
+      
+}

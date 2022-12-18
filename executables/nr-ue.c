@@ -129,6 +129,41 @@ void cfo_compensation(int32_t* rxdata, int start, int end, double off_angle){
   return;
 }
 
+/* 更新rx_offset与频偏估计值 */
+int syncUpdateTrack(PHY_VARS_NR_UE *UE, int position, int length)
+{
+  LOG_I(PHY,"<<<<<<<<<<<<<<<<<<<<< Track update Start >>>>>>>>>>>>>>>>>>>>>>\n");
+  LOG_I(PHY,"[UPDATE SYNC] Search position = %d, range = %d (samples)\n",position,length);
+  //* 滑动窗数据频偏补偿 *//
+  if(UE->UE_fo_compensation){
+      double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
+      double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);
+      int start= position-(length>>1);
+      int end = position+(length>>1);   
+      for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++){ // 下行补偿
+          cfo_compensation((int32_t *)&UE->common_vars.rxdata[i][start],start,end, off_angle); 
+      }
+  }
+  
+  if(nr_track_sync(UE, position, length,0) == 0) {
+        LOG_I(PHY,"<<<<<<<<<<<<<<<<<<<<< Track update Success >>>>>>>>>>>>>>>>>>>>>>\n");
+        // LOG_W(PHY, "[SYNC FSM] Sync mode switch(init->wait).\n");
+        // UE->SYNC_mode[0] = WAIT_SYNC; // set the next sync mode
+
+      /* Calculate rx_offset */
+      int sync_pos_frame = UE->ssb_pos_frame - UE->frame_parms.nb_prefix_samples;
+        if (UE->ssb_offset < sync_pos_frame){
+                      UE->rx_offset =  UE->frame_parms.samples_per_frame - sync_pos_frame + UE->ssb_offset;
+                      UE->init_sync_frame += 1;
+                }
+        else
+              UE->rx_offset = UE->ssb_offset - sync_pos_frame;
+}else{
+           AssertFatal(0,"UPDATE SYNC FAILED\n");
+}
+  return 0;
+}
+
 static void *NRUE_phy_stub_standalone_pnf_task(void *arg);
 
 static size_t dump_L1_UE_meas_stats(PHY_VARS_NR_UE *ue, char *output, size_t max_len)
@@ -766,6 +801,36 @@ void dummyWrite(PHY_VARS_NR_UE *UE,openair0_timestamp timestamp, int writeBlockS
 
 }
 
+void readOneFrame(PHY_VARS_NR_UE *UE,  openair0_timestamp *timestamp, bool toTrash)
+{
+  void *rxp[NB_ANTENNAS_RX];
+  for(int x=0; x<10; x++) {  // one frames for initial sync
+    for (int slot=0; slot<UE->frame_parms.slots_per_subframe; slot ++ ) {
+      for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++) {
+        if (toTrash)
+          rxp[i]=malloc16(UE->frame_parms.get_samples_per_slot(slot,&UE->frame_parms)*4);
+        else
+          rxp[i] = ((void *)&UE->common_vars.rxdata[i][0]) +
+                   4*((x*UE->frame_parms.samples_per_subframe)+
+                   UE->frame_parms.get_samples_slot_timestamp(slot,&UE->frame_parms,0));
+      }
+        
+      AssertFatal( UE->frame_parms.get_samples_per_slot(slot,&UE->frame_parms) ==
+                   UE->rfdevice.trx_read_func(&UE->rfdevice,
+                   timestamp,
+                   rxp,
+                   UE->frame_parms.get_samples_per_slot(slot,&UE->frame_parms),
+                   UE->frame_parms.nb_antennas_rx), "");
+
+      if (IS_SOFTMODEM_RFSIM)
+        dummyWrite(UE,*timestamp, UE->frame_parms.get_samples_per_slot(slot,&UE->frame_parms));
+      if (toTrash)
+        for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++)
+          free(rxp[i]);
+    }
+  }
+}
+
 void readFrame(PHY_VARS_NR_UE *UE,  openair0_timestamp *timestamp, bool toTrash) {
 
   void *rxp[NB_ANTENNAS_RX];
@@ -857,6 +922,7 @@ void *UE_thread(void *arg) {
   UE->rfdevice.host_type = RAU_HOST;
   UE->lost_sync = 0;
   UE->is_synchronized = 0;
+  UE->max_delay_offset = 8;
   AssertFatal(UE->rfdevice.trx_start_func(&UE->rfdevice) == 0, "Could not start the device\n");
 
   notifiedFIFO_t nf;
@@ -885,9 +951,22 @@ void *UE_thread(void *arg) {
         syncRunning=false;
         syncData_t *tmp=(syncData_t *)NotifiedFifoData(res);
         if (UE->is_synchronized) {
+          int track_update_position = UE->initial_sync_pos; // pss position
+          int track_update_winlen = (UE->max_delay_offset * trashed_frames * 2 < UE->frame_parms.ofdm_symbol_size) ? UE->frame_parms.ofdm_symbol_size : UE->max_delay_offset * trashed_frames * 2;
+          // int track_update_winlen = (UE->max_delay_offset * trashed_frames * 2) ;
+          bool win_overflow = ((track_update_winlen>>1) > track_update_position) || (track_update_position + track_update_winlen/2  > 2*UE->frame_parms.samples_per_frame); // 左右溢出
+          if (win_overflow){ 
+          LOG_I(PHY,"<<<<<<<<<<<<<<<<<<<<<<   Track Adjustment   >>>>>>>>>>>>>>>>>>>>>>\n");
+            readOneFrame(UE, &timestamp, true);
+            trashed_frames+=1;
+            track_update_position = (track_update_position + UE->frame_parms.samples_per_frame)%( UE->frame_parms.samples_per_frame<<1); //TODO: fixme
+          }
+          readFrame(UE, &timestamp, false);  //add_yjn，读取两帧
+          trashed_frames+=2; 
+          syncUpdateTrack(UE, track_update_position, track_update_winlen);   //add_yjn同步线程，由pss计算rx_offset，track_sync_fo;
           decoded_frame_rx=(((mac->mib->systemFrameNumber.buf[0] >> mac->mib->systemFrameNumber.bits_unused)<<4) | tmp->proc.decoded_frame_rx);
           // shift the frame index with all the frames we trashed meanwhile we perform the synch search
-          decoded_frame_rx=(decoded_frame_rx + UE->init_sync_frame + trashed_frames) % MAX_FRAME_NUMBER;
+          decoded_frame_rx=(decoded_frame_rx + UE->init_sync_frame + trashed_frames ) % MAX_FRAME_NUMBER;
         }
         delNotifiedFIFO_elt(res);
         start_rx_stream=0;
@@ -897,7 +976,7 @@ void *UE_thread(void *arg) {
         continue;
       }
     }
-
+    
     AssertFatal( !syncRunning, "At this point synchronization can't be running\n");
 
     if (!UE->is_synchronized) {
@@ -1006,29 +1085,18 @@ void *UE_thread(void *arg) {
       UE->frame_parms.get_samples_slot_timestamp(slot_nr,&UE->frame_parms,DURATION_RX_TO_TX) 
       - firstSymSamp;
     
-    // digital compensation of FFO for SSB symbols
+    /* 下行频偏补偿 */
+    
     if (UE->UE_fo_compensation){
-      start_meas(&UE->generic_stat);
-      int start_rx = UE->frame_parms.get_samples_slot_timestamp(slot_nr,&UE->frame_parms,0);
-      int end_rx = start_rx + UE->frame_parms.get_samples_per_slot(slot_nr, &UE->frame_parms);
-      int start_tx = UE->frame_parms.get_samples_slot_timestamp(((slot_nr + DURATION_RX_TO_TX - NR_RX_NB_TH)%nb_slot_frame),&UE->frame_parms,0);
-      int end_tx = start_tx + writeBlockSize;
       double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
       double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
-
+      int start_rx = UE->frame_parms.get_samples_slot_timestamp(slot_nr,&UE->frame_parms,0);
+      int end_rx = start_rx + UE->frame_parms.get_samples_per_slot(slot_nr, &UE->frame_parms);
+      
       for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++){ // 下行补偿
           int32_t* rxdata_start = (int32_t*)&(UE->common_vars.rxdata[i][start_rx]);
           cfo_compensation(rxdata_start,start_rx,end_rx, off_angle); 
       }
-      // TODO: 修改OAI大频偏测试方案,调整gNB的Tx/Rx freq.  
-      for (int i=0; i<UE->frame_parms.nb_antennas_tx; i++){// 上行预补偿 (当前测试环境下ul_offangle = -dl_offangle, 接信道模拟器ul_offangle = -dl_offangle)
-          int32_t* txdata_start = (int32_t*)&UE->common_vars.txdata[i][start_tx];
-          cfo_compensation(txdata_start,start_tx,end_tx, off_angle); 
-      }
-      stop_meas(&UE->generic_stat);
-      int duration_ms = UE->generic_stat.p_time/(cpuf*1000.0);
-      LOG_D(PHY,"[SYNC CFO] DL COMPENSATE %d, UL COMPENSATE %d\n",UE->track_sync_fo,-UE->track_sync_fo);
-      LOG_D(PHY,"SYNC CFO COMPENSATE execution duration %4d microseconds \n", duration_ms);
     }
 
     UE_processing(&curMsg);
@@ -1081,6 +1149,18 @@ void *UE_thread(void *arg) {
         flags = 1;
     } else {
       flags = 1;
+    }
+
+    /* 上行频偏预补偿 */
+    if (UE->UE_fo_compensation){
+      double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
+      double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
+      int start_tx = UE->frame_parms.get_samples_slot_timestamp(((slot_nr + DURATION_RX_TO_TX - NR_RX_NB_TH)%nb_slot_frame),&UE->frame_parms,0);
+      int end_tx = start_tx + writeBlockSize;
+      for (int i=0; i<UE->frame_parms.nb_antennas_tx; i++){// 上行预补偿 (当前测试环境下ul_offangle = -dl_offangle, 接信道模拟器ul_offangle = -dl_offangle)
+          int32_t* txdata_start = (int32_t*)&UE->common_vars.txdata[i][start_tx];
+          cfo_compensation(txdata_start,start_tx,end_tx, off_angle); 
+      }
     }
 
     if (flags || IS_SOFTMODEM_RFSIM)

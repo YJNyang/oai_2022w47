@@ -793,6 +793,7 @@ int dump_ue_stats(PHY_VARS_NR_UE *phy_vars_ue, UE_nr_rxtx_proc_t *proc, char* bu
 
 void fre_offset_compensation_simd(int32_t* rxdata, int start, int end, double off_angle);
 
+int nr_track_sync(PHY_VARS_NR_UE *ue, int position,int length,bool ffo_only);
 /*!
   \brief This function performs the initial cell search procedure - PSS detection, SSS detection and PBCH detection.  At the
   end, the basic frame parameters are known (Frame configuration - TDD/FDD and cyclic prefix length,
