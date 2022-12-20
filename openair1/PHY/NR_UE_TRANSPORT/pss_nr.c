@@ -1097,32 +1097,53 @@ int pss_freq_track_nr(int **rxdata, ///rx data in time domain
 		                   int *f_off)
 {
   //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> PSS FFO EST <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<//
-     int64_t result1,result2;
-     double ffo_pss=0;
-	  // Computing cross-correlation at peak on half the symbol size for first half of data
-	  result1  = dot_product64((short*)primary_synchro_time_nr[eNB_id], 
-				  (short*) &(rxdata[0][position]), 
-				  frame_parms->ofdm_symbol_size>>1, 
-				  pss_corr_shift);
-	  // Computing cross-correlation at peak on half the symbol size for data shifted by half symbol size 
-	  // as it is real and complex it is necessary to shift by a value equal to symbol size to obtain such shift
-	  result2  = dot_product64((short*)primary_synchro_time_nr[eNB_id]+(frame_parms->ofdm_symbol_size), 
-				  (short*) &(rxdata[0][position])+frame_parms->ofdm_symbol_size, 
-				  frame_parms->ofdm_symbol_size>>1, 
-				  pss_corr_shift);
+    //  int64_t result1,result2;
+    //  double ffo_pss=0;
+	  // // Computing cross-correlation at peak on half the symbol size for first half of data
+	  // result1  = dot_product64((short*)primary_synchro_time_nr[eNB_id], 
+		// 		  (short*) &(rxdata[0][position]), 
+		// 		  frame_parms->ofdm_symbol_size>>1, 
+		// 		  pss_corr_shift);
+	  // // Computing cross-correlation at peak on half the symbol size for data shifted by half symbol size 
+	  // // as it is real and complex it is necessary to shift by a value equal to symbol size to obtain such shift
+	  // result2  = dot_product64((short*)primary_synchro_time_nr[eNB_id]+(frame_parms->ofdm_symbol_size), 
+		// 		  (short*) &(rxdata[0][position])+frame_parms->ofdm_symbol_size, 
+		// 		  frame_parms->ofdm_symbol_size>>1, 
+		// 		  pss_corr_shift);
 
-	  int64_t re1,re2,im1,im2;
-	  re1=((int*) &result1)[0];
-	  re2=((int*) &result2)[0];
-	  im1=((int*) &result1)[1];
-	  im2=((int*) &result2)[1];
+	  // int64_t re1,re2,im1,im2;
+	  // re1=((int*) &result1)[0];
+	  // re2=((int*) &result2)[0];
+	  // im1=((int*) &result1)[1];
+	  // im2=((int*) &result2)[1];
 
- 	  // estimation of fractional frequency offset: angle[(result1)'*(result2)]/pi
-	  ffo_pss=-atan2(re1*im2-re2*im1,re1*re2+im1*im2)/M_PI;
-    LOG_D(PHY,"[UE_SYNC_FFO_PSS]  FFO_PSS Est res:  ffo_pss=%f \n",ffo_pss);
+ 	  // // estimation of fractional frequency offset: angle[(result1)'*(result2)]/pi
+	  // ffo_pss=-atan2(re1*im2-re2*im1,re1*re2+im1*im2)/M_PI;
+    // LOG_D(PHY,"[UE_SYNC_FFO_PSS]  FFO_PSS Est res:  ffo_pss=%f \n",ffo_pss);
+
+  //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> CP FFO EST <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<//
+
+    double ffo_cp=0;
+    int64_t ffo_cp_corr = 0;
+    int64_t ffo_cp_est = 0;
+    int offsetUnit = frame_parms->nb_prefix_samples + frame_parms->ofdm_symbol_size;
+    int PosStart = position - frame_parms->nb_prefix_samples;  
+    int cp_corr_shift = frame_parms->ffo_corr_shift >0 ? frame_parms->ffo_corr_shift : pss_corr_shift;
+    for (int i = 0; i < 4; i++){
+        ffo_cp_corr = dot_product64((short*)&(rxdata[0][PosStart+i*offsetUnit]), 
+                                  (short*)&(rxdata[0][PosStart+i*offsetUnit+frame_parms->ofdm_symbol_size]), // 修改：调用前完成数据截取
+                                  frame_parms->nb_prefix_samples,
+                                  cp_corr_shift);
+      ((int32_t*) &ffo_cp_est)[0] = ((int32_t*) &ffo_cp_est)[0]+((int32_t*) &ffo_cp_corr)[0];
+      ((int32_t*) &ffo_cp_est)[1] = ((int32_t*) &ffo_cp_est)[1]+((int32_t*) &ffo_cp_corr)[1];
+    }
+    int32_t re3,im3;
+    re3=((int32_t*) &ffo_cp_est)[0];
+    im3=((int32_t*) &ffo_cp_est)[1];
+    ffo_cp=-atan2(im3,re3)/2/M_PI; // ffo=-angle()/2/pi
 
   // ===========================================  输出量计算   =========================================== 
-    *f_off += ffo_pss*frame_parms->subcarrier_spacing;  
+    *f_off += ffo_cp*frame_parms->subcarrier_spacing;  
     // LOG_I(PHY,"[TRC SYNC] SNR=%d, sync_pos=%d(%d), ffo_cp=%f, cfo_track=%d \n",trackSNR,peak_position,length,ffo_pss*frame_parms->subcarrier_spacing,*f_off);
     return(*f_off);
 }

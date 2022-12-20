@@ -116,17 +116,12 @@ void nr_adjust_synch_ue(NR_DL_FRAME_PARMS *frame_parms,
   }
 
   /* 频率跟踪 */
-  int freq_track = nr_track_sync(ue, ue->ssb_pos_frame+ue->max_pos_fil, 0,1);
+  int freq_track = nr_track_sync(ue, ue->ssb_pos_frame, 0,1);
 
 
-  LOG_D(PHY,"AbsSubframe %d: diff = %i, rx_offset (final) = %i : clear = %d, max_pos = %d, max_pos_fil = %d, max_val = %d, sync_pos = %d, freq_track = %d\n",
-        subframe,
-        diff,
-        ue->rx_offset,
-        clear,
+  LOG_I(PHY,"max_pos = %d, max_pos_fil = %d, sync_pos = %d, freq_track = %d\n",
         max_pos,
         ue->max_pos_fil,
-        max_val,
         sync_pos,
         freq_track);
 

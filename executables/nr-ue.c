@@ -139,7 +139,7 @@ int syncUpdateTrack(PHY_VARS_NR_UE *UE, int position, int length)
       double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
       double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);
       int start= position-(length>>1);
-      int end = position+(length>>1);   
+      int end = position+(length>>1) + UE->frame_parms.ofdm_symbol_size;   
       for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++){ // 下行补偿
           cfo_compensation((int32_t *)&UE->common_vars.rxdata[i][start],start,end, off_angle); 
       }
@@ -1086,13 +1086,10 @@ void *UE_thread(void *arg) {
       - firstSymSamp;
     
     /* 下行频偏补偿 */
-    
-    if (UE->UE_fo_compensation){
-      double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
-      double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
+    double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
+    double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
       int start_rx = UE->frame_parms.get_samples_slot_timestamp(slot_nr,&UE->frame_parms,0);
       int end_rx = start_rx + UE->frame_parms.get_samples_per_slot(slot_nr, &UE->frame_parms);
-      
       for (int i=0; i<UE->frame_parms.nb_antennas_rx; i++){ // 下行补偿
           int32_t* rxdata_start = (int32_t*)&(UE->common_vars.rxdata[i][start_rx]);
           cfo_compensation(rxdata_start,start_rx,end_rx, off_angle); 
@@ -1153,8 +1150,8 @@ void *UE_thread(void *arg) {
 
     /* 上行频偏预补偿 */
     if (UE->UE_fo_compensation){
-      double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
-      double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
+      // double s_time = 1/(1.0e3*UE->frame_parms.samples_per_subframe);  // sampling time
+      // double off_angle = 2*M_PI*s_time*(UE->track_sync_fo);  // offset rotation angle compensation per sample 
       int start_tx = UE->frame_parms.get_samples_slot_timestamp(((slot_nr + DURATION_RX_TO_TX - NR_RX_NB_TH)%nb_slot_frame),&UE->frame_parms,0);
       int end_tx = start_tx + writeBlockSize;
       for (int i=0; i<UE->frame_parms.nb_antennas_tx; i++){// 上行预补偿 (当前测试环境下ul_offangle = -dl_offangle, 接信道模拟器ul_offangle = -dl_offangle)
